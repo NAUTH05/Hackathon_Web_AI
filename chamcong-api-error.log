@@ -1,0 +1,514 @@
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at Function.listen (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/application.js:635:24)
+    at Object.<anonymous> (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/index.js:41:5)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at Object.<anonymous> (/home/nauth-fitpro/.nvm/versions/node/v22.21.0/lib/node_modules/pm2/lib/ProcessContainerFork.js:33:23) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+Gemini AI error: ApiError: {"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash\nPlease retry in 39.909992913s.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.Help","links":[{"description":"Learn more about Gemini API quotas","url":"https://ai.google.dev/gemini-api/docs/rate-limits"}]},{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_input_token_count","quotaId":"GenerateContentInputTokensPerModelPerMinute-FreeTier","quotaDimensions":{"location":"global","model":"gemini-2.0-flash"}},{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier","quotaDimensions":{"model":"gemini-2.0-flash","location":"global"}},{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaDimensions":{"model":"gemini-2.0-flash","location":"global"}}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"39s"}]}}
+    at throwErrorIfNotOK (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/@google/genai/dist/node/index.cjs:12706:30)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/@google/genai/dist/node/index.cjs:12409:13
+    at async Models.generateContent (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/@google/genai/dist/node/index.cjs:13810:24)
+    at async /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/ai.js:45:26 {
+  status: 429
+}
+Gemini AI error: ApiError: {"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 0, model: gemini-2.0-flash\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_input_token_count, limit: 0, model: gemini-2.0-flash\nPlease retry in 38.024517266s.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.Help","links":[{"description":"Learn more about Gemini API quotas","url":"https://ai.google.dev/gemini-api/docs/rate-limits"}]},{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaDimensions":{"model":"gemini-2.0-flash","location":"global"}},{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier","quotaDimensions":{"model":"gemini-2.0-flash","location":"global"}},{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_input_token_count","quotaId":"GenerateContentInputTokensPerModelPerMinute-FreeTier","quotaDimensions":{"model":"gemini-2.0-flash","location":"global"}}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"38s"}]}}
+    at throwErrorIfNotOK (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/@google/genai/dist/node/index.cjs:12706:30)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/@google/genai/dist/node/index.cjs:12409:13
+    at async Models.generateContent (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/@google/genai/dist/node/index.cjs:13810:24)
+    at async /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/ai.js:45:26 {
+  status: 429
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Check-in error: Error: Incorrect datetime value: '2026-03-10T08:42:47.392Z' for column `chamcong`.`attendance_records`.`check_in_time` at row 1
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/attendance.js:193:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+  code: 'ER_TRUNCATED_WRONG_VALUE',
+  errno: 1292,
+  sql: 'INSERT INTO attendance_records (id, employee_id, employee_name, date, shift_id, shift_name, check_in_time, check_in_image, status, late_minutes, note)\n' +
+    '       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  sqlState: '22007',
+  sqlMessage: "Incorrect datetime value: '2026-03-10T08:42:47.392Z' for column `chamcong`.`attendance_records`.`check_in_time` at row 1"
+}
+Check-in error: Error: Incorrect datetime value: '2026-03-10T08:43:14.665Z' for column `chamcong`.`attendance_records`.`check_in_time` at row 1
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/attendance.js:193:16
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+  code: 'ER_TRUNCATED_WRONG_VALUE',
+  errno: 1292,
+  sql: 'INSERT INTO attendance_records (id, employee_id, employee_name, date, shift_id, shift_name, check_in_time, check_in_image, status, late_minutes, note)\n' +
+    '       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  sqlState: '22007',
+  sqlMessage: "Incorrect datetime value: '2026-03-10T08:43:14.665Z' for column `chamcong`.`attendance_records`.`check_in_time` at row 1"
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
+Update shift error: Error: Bind parameters must not contain undefined. To pass SQL NULL specify JS null
+    at PromisePool.execute (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/mysql2/lib/promise/pool.js:54:22)
+    at /home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/routes/shifts.js:49:16
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at adminOnly (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:23:3)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13)
+    at authenticate (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/src/middleware/auth.js:13:5)
+    at Layer.handle [as handle_request] (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/layer.js:95:5)
+    at next (/home/nauth-fitpro/htdocs/fit.pro.vn/apps/chamcong/backend/node_modules/express/lib/router/route.js:149:13) {
+  code: undefined,
+  errno: undefined,
+  sql: undefined,
+  sqlState: undefined,
+  sqlMessage: undefined
+}
