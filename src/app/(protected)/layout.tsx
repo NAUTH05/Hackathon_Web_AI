@@ -1,6 +1,7 @@
 "use client";
 
 import Layout from "@/components/Layout";
+import GuideBotUI from "@/components/GuideBotUI";
 import ToastContainer from "@/components/Toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
@@ -26,6 +27,7 @@ export default function ProtectedLayout({
     <>
       <Layout>{children}</Layout>
       <ToastContainer />
+      <GuideBotUI />
     </>
   );
 }

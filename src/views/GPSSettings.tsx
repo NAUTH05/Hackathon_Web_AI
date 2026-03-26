@@ -1,4 +1,4 @@
-import { MapPin, Plus, Trash2 } from "lucide-react";
+import { MapPin, MessageSquare, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { showToast } from "../components/Toast";
@@ -6,6 +6,8 @@ import {
   addCompanyLocation,
   deleteCompanyLocation,
   getCompanyLocations,
+  getSystemSettings,
+  updateSystemSettings,
 } from "../store/storage";
 import type { CompanyLocation } from "../types";
 
@@ -13,6 +15,7 @@ export default function GPSSettings() {
   const [locations, setLocations] = useState<CompanyLocation[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [chatbotEnabled, setChatbotEnabled] = useState(false);
   const [form, setForm] = useState({
     name: "",
     address: "",
@@ -24,9 +27,21 @@ export default function GPSSettings() {
   useEffect(() => {
     async function init() {
       setLocations(await getCompanyLocations());
+      const settings = await getSystemSettings();
+      setChatbotEnabled(!!settings.chatbot_enabled);
     }
     init();
   }, []);
+
+  async function handleToggleChatbot(enabled: boolean) {
+    try {
+      await updateSystemSettings({ chatbot_enabled: enabled });
+      setChatbotEnabled(enabled);
+      showToast('success', 'Cập nhật thành công', `Đã ${enabled ? 'bật' : 'tắt'} Chatbot hỗ trợ`);
+    } catch (err) {
+      showToast('error', 'Lỗi', 'Không thể cập nhật cài đặt Chatbot');
+    }
+  }
 
   async function handleSubmit() {
     if (!form.name.trim() || !form.latitude || !form.longitude) return;
@@ -70,6 +85,32 @@ export default function GPSSettings() {
 
   return (
     <div>
+      {/* General Settings */}
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-8">
+        <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-primary-600" />
+          Cài đặt chung
+        </h2>
+        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900">Chatbot hỗ trợ</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Hiển thị khung chat hỗ trợ người dùng ở góc màn hình</p>
+          </div>
+          <button
+            onClick={() => handleToggleChatbot(!chatbotEnabled)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+              chatbotEnabled ? 'bg-primary-600' : 'bg-gray-200'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                chatbotEnabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">

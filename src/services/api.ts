@@ -243,3 +243,14 @@ export const exportTemplatesApi = {
   setDefault: (id: string) => request<Record<string, unknown>>('PUT', `/export-templates/${encodeURIComponent(id)}/set-default`),
   fields: () => request<{ field: string; label: string; format: string }[]>('GET', '/export-payroll/fields'),
 };
+
+// ============ System Settings ============
+export const settingsApi = {
+  get: () => request<Record<string, any>>('GET', '/settings'),
+  update: (data: Record<string, any>) => request<void>('PUT', '/settings', data),
+};
+
+// ============ AI Chat ============
+export const chatApi = {
+  send: (message: string) => request<{ response: string }>('POST', '/chat', { message }),
+};

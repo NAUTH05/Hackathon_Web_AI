@@ -1,6 +1,7 @@
 "use client";
 
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ChatbotProvider } from "@/contexts/ChatbotContext";
 import "./globals.css";
 
 export default function RootLayout({
@@ -15,7 +16,11 @@ export default function RootLayout({
         <meta name="description" content="He thong cham cong nhan vien" />
       </head>
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <ChatbotProvider>
+            {children}
+          </ChatbotProvider>
+        </AuthProvider>
       </body>
     </html>
   );

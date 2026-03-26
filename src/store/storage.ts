@@ -11,6 +11,7 @@ import {
     penaltiesApi,
     penaltyTemplatesApi,
     salaryApi,
+    settingsApi,
     shiftAssignmentsApi,
     shiftSwapsApi,
     shiftsApi,
@@ -570,4 +571,13 @@ export async function deleteExportTemplate(id: string): Promise<void> {
 
 export async function setDefaultTemplate(id: string): Promise<void> {
   await exportTemplatesApi.setDefault(id);
+}
+
+// ========== System Settings ==========
+export async function getSystemSettings(): Promise<Record<string, any>> {
+  return await settingsApi.get();
+}
+
+export async function updateSystemSettings(data: Record<string, any>): Promise<void> {
+  await settingsApi.update(data);
 }

@@ -65,6 +65,8 @@ app.use('/api/shift-swaps', require('./routes/shiftSwaps'));
 app.use('/api/audit-logs', require('./routes/auditLogs'));
 app.use('/api/export-payroll', require('./routes/exportPayroll'));
 app.use('/api/export-templates', require('./routes/exportTemplates'));
+app.use('/api/settings', require('./routes/settings'));
+app.use('/api/chat', require('./routes/chat'));
 
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));

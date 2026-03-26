@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS attendance_records (
     FOREIGN KEY (employee_id) REFERENCES employees(id),
     FOREIGN KEY (shift_id) REFERENCES shifts(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-CREATE INDEX IF NOT EXISTS idx_attendance_emp_date ON attendance_records(employee_id, date);
+CREATE INDEX idx_attendance_emp_date ON attendance_records(employee_id, date);
 
 -- 7. Yeu cau OT
 CREATE TABLE IF NOT EXISTS ot_requests (
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     old_value TEXT,
     new_value TEXT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(timestamp DESC);
+CREATE INDEX idx_audit_ts ON audit_logs(timestamp DESC);
 
 -- 12. Sua gio
 CREATE TABLE IF NOT EXISTS time_corrections (
