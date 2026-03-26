@@ -189,17 +189,31 @@ router.get('/export', authenticate, async (req, res) => {
 router.get('/today', authenticate, async (req, res) => {
   try {
     const today = getVietnamNow().today;
-    let query = `SELECT * FROM attendance_records WHERE date = ?`;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    let where = `WHERE date = ?`;
     const params = [today];
 
     if (req.user.role !== 'admin') {
       params.push(req.user.employeeId);
-      query += ` AND employee_id = ?`;
+      where += ` AND employee_id = ?`;
     }
 
-    query += ' ORDER BY check_in_time DESC';
-    const [rows] = await pool.execute(query, params);
-    res.json(toCamelCaseArray(rows));
+    const [[{ total }]] = await pool.execute(
+      `SELECT COUNT(*) AS total FROM attendance_records ${where}`, params
+    );
+
+    const [rows] = await pool.execute(
+      `SELECT * FROM attendance_records ${where} ORDER BY check_in_time DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    res.json({
+      data: toCamelCaseArray(rows),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
   } catch (err) {
     console.error('Get today attendance error:', err);
     res.status(500).json({ error: 'Lỗi server' });

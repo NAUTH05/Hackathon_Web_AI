@@ -122,7 +122,7 @@ export const shiftAssignmentsApi = {
 export const attendanceApi = {
   list: (params?: Record<string, string>) =>
     request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>('GET', '/attendance', undefined, params),
-  today: () => request<Record<string, unknown>[]>('GET', '/attendance/today'),
+  today: (params?: Record<string, string>) => request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>('GET', '/attendance/today', undefined, params),
   stats: () => request<Record<string, unknown>>('GET', '/attendance/stats'),
   checkIn: (data: { employeeId: string; shiftId?: string; latitude?: number; longitude?: number; checkInImage?: string }) =>
     request<Record<string, unknown>>('POST', '/attendance/check-in', data),
