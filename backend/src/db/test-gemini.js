@@ -4,7 +4,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 async function listModels() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.error('❌ GEMINI_API_KEY is missing in .env');
+    console.error('GEMINI_API_KEY is missing in .env');
     return;
   }
 
@@ -15,12 +15,12 @@ async function listModels() {
     // Note: listModels is usually on v1beta or v1
     // We'll try the default first
     const result = await genAI.listModels();
-    console.log('✅ Available Models:');
+    console.log('Available Models:');
     result.models.forEach(m => {
       console.log(`- ${m.name} (Supported: ${m.supportedGenerationMethods.join(', ')})`);
     });
   } catch (err) {
-    console.error('❌ Failed to list models:', err.message);
+    console.error('Failed to list models:', err.message);
   }
 }
 
