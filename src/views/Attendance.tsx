@@ -10,10 +10,12 @@ import {
   MapPin,
   Monitor,
   Navigation,
+  Search,
   Shield,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { showToast } from "../components/Toast";
 import { useAuth } from "../contexts/AuthContext";
 import {
   checkIn,
@@ -24,7 +26,15 @@ import {
   isWithinCompanyRange,
 } from "../store/storage";
 import type { AttendanceRecord, Employee, Shift } from "../types";
-import { showToast } from "../components/Toast";
+
+// DB datetime comes from API as "YYYY-MM-DDTHH:mm:ss+07:00" (Vietnam local time).
+// Extract time part directly to avoid any browser timezone conversion.
+const fmtTime = (dt: string | undefined | null): string => {
+  if (!dt) return "--:--";
+  const sep = dt.includes("T") ? "T" : " ";
+  const time = (dt.split(sep)[1] ?? "").replace(/[+Z].*$/, "");
+  return time.slice(0, 5) || "--:--";
+};
 
 type Mode = "check-in" | "check-out";
 type GPSState =
@@ -59,8 +69,9 @@ function detectDevTools(callback: () => void): () => void {
       // ignore
     }
     const duration = performance.now() - start;
-    // If debugger took >100ms, DevTools is likely open
-    if (duration > 100 && !devToolsOpen) {
+    // If debugger took >500ms, DevTools is likely open
+    // 100ms was too low — low-end phones can compile new Function() slowly
+    if (duration > 500 && !devToolsOpen) {
       devToolsOpen = true;
       callback();
     }
@@ -71,7 +82,9 @@ function detectDevTools(callback: () => void): () => void {
 }
 
 export default function Attendance() {
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, roleLevel, logout } = useAuth();
+  // level 1 (admin), 2 (GĐ), 3 (TP/PP) có thể chọn nhân viên để chấm hộ
+  const canSelectEmployee = roleLevel <= 3;
 
   const [mode, setMode] = useState<Mode>("check-in");
   const [gpsState, setGpsState] = useState<GPSState>("idle");
@@ -94,6 +107,8 @@ export default function Attendance() {
   >("info");
   const [processing, setProcessing] = useState(false);
   const [isMobile, setIsMobile] = useState(true); // assume mobile until checked
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
 
   // Check if device is mobile (client-side only)
   useEffect(() => {
@@ -103,18 +118,19 @@ export default function Attendance() {
   // Detect developer mode — if DevTools open on mobile, force logout
   const handleDevToolsDetected = useCallback(() => {
     showToast(
-      'error',
-      'Cảnh báo',
-      'Phát hiện chế độ nhà phát triển. Bạn sẽ bị đăng xuất.'
+      "error",
+      "Cảnh báo",
+      "Phát hiện chế độ nhà phát triển. Bạn sẽ bị đăng xuất.",
     );
     setTimeout(() => logout(), 2000);
   }, [logout]);
 
   useEffect(() => {
     if (!isMobile) return; // only check on mobile
+    if (isAdmin) return; // admin không bị giới hạn DevTools
     const cleanup = detectDevTools(handleDevToolsDetected);
     return cleanup;
-  }, [isMobile, handleDevToolsDetected]);
+  }, [isMobile, isAdmin, handleDevToolsDetected]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -124,17 +140,24 @@ export default function Attendance() {
   useEffect(() => {
     async function init() {
       const s = await getShifts();
-      const res = await getEmployeesPaginated({ limit: '50', isActive: 'true' });
+      // Load all employees (backend auto-filters by department for level 3)
+      const res = await getEmployeesPaginated({
+        limit: "10000",
+        isActive: "true",
+      });
       const e = res.data;
       setShifts(s);
       setEmployees(e);
       setTodayRecords(await getTodayAttendance());
       if (s.length > 0) setSelectedShift(s[0].id);
 
-      if (!isAdmin && user?.employeeId) {
+      if (!canSelectEmployee && user?.employeeId) {
+        // nhân viên thường: chỉ chấm cho bản thân
         setSelectedEmployee(user.employeeId);
-      } else if (isAdmin && e.length > 0) {
+      } else if (canSelectEmployee && e.length > 0) {
+        // admin / GĐ / TP: mặc định chọn nhân viên đầu tiên
         setSelectedEmployee(e[0].id);
+        setEmployeeSearch(`${e[0].employeeCode} - ${e[0].name}`);
       }
     }
     init();
@@ -267,8 +290,8 @@ export default function Attendance() {
     }
   };
 
-  // If not mobile, show blocked UI
-  if (!isMobile) {
+  // Admin có thể dùng laptop; các level khác bắt buộc mobile
+  if (!isMobile && !isAdmin) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
         <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-8 max-w-md">
@@ -352,20 +375,72 @@ export default function Attendance() {
                 ))}
               </select>
 
-              {/* Employee select (admin only can choose) */}
-              {isAdmin && (
-                <select
-                  value={selectedEmployee}
-                  onChange={(e) => setSelectedEmployee(e.target.value)}
-                  className="flex-1 text-sm border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  {employees.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name} ({e.employeeCode})
-                    </option>
-                  ))}
-                </select>
-              )}
+              {/* Employee search (admin / GĐ / TP có thể chọn nhân viên) */}
+              {canSelectEmployee &&
+                (() => {
+                  const q = employeeSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? employees
+                        .filter(
+                          (e) =>
+                            e.employeeCode.toLowerCase().includes(q) ||
+                            e.name.toLowerCase().includes(q),
+                        )
+                        .slice(0, 20)
+                    : employees.slice(0, 20);
+                  return (
+                    <div className="relative">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        <input
+                          type="text"
+                          placeholder="Tìm mã hoặc tên nhân viên..."
+                          value={employeeSearch}
+                          onChange={(e) => {
+                            setEmployeeSearch(e.target.value);
+                            setShowEmployeeDropdown(true);
+                          }}
+                          onFocus={() => setShowEmployeeDropdown(true)}
+                          onBlur={() =>
+                            setTimeout(
+                              () => setShowEmployeeDropdown(false),
+                              200,
+                            )
+                          }
+                          className="w-full text-sm border border-gray-200 rounded-xl pl-9 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                      {showEmployeeDropdown && filtered.length > 0 && (
+                        <div className="absolute z-20 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
+                          {filtered.map((e) => (
+                            <button
+                              key={e.id}
+                              type="button"
+                              onMouseDown={() => {
+                                setSelectedEmployee(e.id);
+                                setEmployeeSearch(
+                                  `${e.employeeCode} - ${e.name}`,
+                                );
+                                setShowEmployeeDropdown(false);
+                              }}
+                              className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
+                            >
+                              <span className="font-mono text-primary-600 mr-2">
+                                {e.employeeCode}
+                              </span>
+                              <span className="text-gray-800">{e.name}</span>
+                              {roleLevel <= 2 && (
+                                <span className="text-xs text-gray-400 ml-1">
+                                  ({e.department})
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
             </div>
           </div>
 
@@ -409,7 +484,8 @@ export default function Attendance() {
             </div>
             {currentCoords && (
               <div className="mt-2 text-[11px] opacity-60 font-mono">
-                {Number(currentCoords.lat).toFixed(6)}, {Number(currentCoords.lon).toFixed(6)}
+                {Number(currentCoords.lat).toFixed(6)},{" "}
+                {Number(currentCoords.lon).toFixed(6)}
               </div>
             )}
           </div>
@@ -500,14 +576,14 @@ export default function Attendance() {
                         <span className="flex items-center gap-0.5">
                           <LogIn className="w-3 h-3" />
                           {record.checkInTime
-                            ? format(new Date(record.checkInTime), "HH:mm")
+                            ? fmtTime(record.checkInTime)
                             : "--:--"}
                         </span>
                         <span className="text-gray-300">→</span>
                         <span className="flex items-center gap-0.5">
                           <LogOut className="w-3 h-3" />
                           {record.checkOutTime
-                            ? format(new Date(record.checkOutTime), "HH:mm")
+                            ? fmtTime(record.checkOutTime)
                             : "--:--"}
                         </span>
                         {record.lateMinutes > 0 && (
