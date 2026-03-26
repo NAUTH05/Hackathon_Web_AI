@@ -3,7 +3,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 async function listModelsRest() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.error('❌ GEMINI_API_KEY is missing');
+    console.error('GEMINI_API_KEY is missing');
     return;
   }
 
@@ -14,16 +14,16 @@ async function listModelsRest() {
     const data = await res.json();
     
     if (data.error) {
-      console.error('❌ API Error:', data.error.message);
+      console.error('API Error:', data.error.message);
       return;
     }
 
-    console.log('✅ Available Models (REST):');
+    console.log('Available Models (REST):');
     data.models.forEach(m => {
       console.log(`- ${m.name}`);
     });
   } catch (err) {
-    console.error('❌ Request failed:', err.message);
+    console.error('Request failed:', err.message);
   }
 }
 
