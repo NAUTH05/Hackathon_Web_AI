@@ -19,6 +19,23 @@ import {
 } from "../store/storage";
 import type { AttendanceRecord, Employee } from "../types";
 
+// DB datetime comes from API as "YYYY-MM-DDTHH:mm:ss+07:00" (Vietnam local time).
+// Extract time part directly to avoid any browser timezone conversion.
+const fmtTime = (dt: string | undefined | null, fmt: string): string => {
+  if (!dt) return "";
+  // Handle both "YYYY-MM-DD HH:mm:ss" and "YYYY-MM-DDTHH:mm:ss+07:00"
+  const sep = dt.includes("T") ? "T" : " ";
+  const [datePart, timePart] = dt.split(sep);
+  const time = (timePart ?? "").replace(/[+Z].*$/, ""); // strip timezone suffix
+  if (fmt === "HH:mm:ss") return time.slice(0, 8) || "";
+  if (fmt === "HH:mm") return time.slice(0, 5) || "";
+  if (fmt === "HH:mm:ss dd/MM/yyyy") {
+    const [y, m, d] = (datePart ?? "").split("-");
+    return `${time.slice(0, 8)} ${d}/${m}/${y}`;
+  }
+  return dt;
+};
+
 export default function AttendanceHistory() {
   const { isAdmin } = useAuth();
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
@@ -56,6 +73,7 @@ export default function AttendanceHistory() {
     const params: Record<string, string> = { page: String(page), limit: "30" };
     if (filterEmployee) params.employeeCode = filterEmployee;
     if (filterDate) params.date = filterDate;
+    if (filterStatus) params.status = filterStatus;
     const res = await getAttendanceRecordsPaginated(params);
     setRecords(res.data);
     setTotalPages(res.pagination.totalPages);
@@ -77,12 +95,11 @@ export default function AttendanceHistory() {
     pending: "bg-gray-100 text-gray-700",
   };
 
-  // Client-side search filter (name search works within current page)
+  // Client-side search filter (name search only, status is filtered server-side)
   const filtered = records.filter((r) => {
-    const matchSearch =
-      !search || r.employeeName.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = !filterStatus || r.status === filterStatus;
-    return matchSearch && matchStatus;
+    return (
+      !search || r.employeeName.toLowerCase().includes(search.toLowerCase())
+    );
   });
 
   const monthStart = startOfMonth(currentMonth);
@@ -282,12 +299,12 @@ export default function AttendanceHistory() {
                       </td>
                       <td className="px-5 py-3 text-center text-sm text-gray-600 tabular-nums">
                         {record.checkInTime
-                          ? format(new Date(record.checkInTime), "HH:mm:ss")
+                          ? fmtTime(record.checkInTime, "HH:mm:ss")
                           : "--:--"}
                       </td>
                       <td className="px-5 py-3 text-center text-sm text-gray-600 tabular-nums">
                         {record.checkOutTime
-                          ? format(new Date(record.checkOutTime), "HH:mm:ss")
+                          ? fmtTime(record.checkOutTime, "HH:mm:ss")
                           : "--:--"}
                       </td>
                       <td className="px-5 py-3 text-center text-sm tabular-nums">
@@ -436,8 +453,8 @@ export default function AttendanceHistory() {
                   />
                   <p className="text-xs text-gray-400 mt-1">
                     {selectedRecord.checkInTime
-                      ? format(
-                          new Date(selectedRecord.checkInTime),
+                      ? fmtTime(
+                          selectedRecord.checkInTime,
                           "HH:mm:ss dd/MM/yyyy",
                         )
                       : ""}
@@ -454,8 +471,8 @@ export default function AttendanceHistory() {
                   />
                   <p className="text-xs text-gray-400 mt-1">
                     {selectedRecord.checkOutTime
-                      ? format(
-                          new Date(selectedRecord.checkOutTime),
+                      ? fmtTime(
+                          selectedRecord.checkOutTime,
                           "HH:mm:ss dd/MM/yyyy",
                         )
                       : ""}

@@ -1,13 +1,22 @@
 "use client";
 
 import { format } from "date-fns";
+import { CalendarDays, Lock, Search, Unlock, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import Pagination from "../components/Pagination";
-import { useAuth } from "../contexts/AuthContext";
-import { getDailyTimesheetPaginated } from "../store/storage";
-import { timesheetsApi } from "../services/api";
-import { CalendarDays, Search, X, Lock, Unlock } from "lucide-react";
 import { showToast } from "../components/Toast";
+import { useAuth } from "../contexts/AuthContext";
+import { timesheetsApi } from "../services/api";
+import { getDailyTimesheetPaginated } from "../store/storage";
+
+// DB datetime comes from API as "YYYY-MM-DDTHH:mm:ss+07:00" (Vietnam local time).
+// Extract time part directly to avoid any browser timezone conversion.
+const fmtTime = (dt: string | undefined | null): string => {
+  if (!dt) return "--:--";
+  const sep = dt.includes("T") ? "T" : " ";
+  const time = (dt.split(sep)[1] ?? "").replace(/[+Z].*$/, "");
+  return time.slice(0, 5) || "--:--";
+};
 
 interface DailyRecord {
   employeeId: string;
@@ -30,7 +39,7 @@ export default function DailyTimesheet() {
   const { isAdmin } = useAuth();
   const [records, setRecords] = useState<DailyRecord[]>([]);
   const [selectedDate, setSelectedDate] = useState(
-    format(new Date(), "yyyy-MM-dd")
+    format(new Date(), "yyyy-MM-dd"),
   );
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -74,15 +83,23 @@ export default function DailyTimesheet() {
     try {
       if (isLocked) {
         await timesheetsApi.unlockDay(selectedDate);
-        showToast('success', 'Đã mở khóa', `Bảng công ngày ${selectedDate} đã được mở khóa.`);
+        showToast(
+          "success",
+          "Đã mở khóa",
+          `Bảng công ngày ${selectedDate} đã được mở khóa.`,
+        );
       } else {
         await timesheetsApi.lockDay(selectedDate);
-        showToast('success', 'Đã khóa', `Bảng công ngày ${selectedDate} đã bị khóa.`);
+        showToast(
+          "success",
+          "Đã khóa",
+          `Bảng công ngày ${selectedDate} đã bị khóa.`,
+        );
       }
       await loadRecords();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Lỗi';
-      showToast('error', 'Lỗi', msg);
+      const msg = err instanceof Error ? err.message : "Lỗi";
+      showToast("error", "Lỗi", msg);
     } finally {
       setLocking(false);
     }
@@ -106,7 +123,10 @@ export default function DailyTimesheet() {
 
   // Summary stats
   const totalPresent = records.filter(
-    (r) => r.attendanceStatus === "on-time" || r.attendanceStatus === "late" || r.attendanceStatus === "pending"
+    (r) =>
+      r.attendanceStatus === "on-time" ||
+      r.attendanceStatus === "late" ||
+      r.attendanceStatus === "pending",
   ).length;
   const totalLate = records.filter((r) => r.attendanceStatus === "late").length;
   const totalNoRecord = records.filter((r) => !r.attendanceId).length;
@@ -122,7 +142,8 @@ export default function DailyTimesheet() {
             Bảng công ngày
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Tất cả nhân viên — dữ liệu chấm công ngày {format(new Date(selectedDate + 'T00:00:00'), 'dd/MM/yyyy')}
+            Tất cả nhân viên — dữ liệu chấm công ngày{" "}
+            {format(new Date(selectedDate + "T00:00:00"), "dd/MM/yyyy")}
           </p>
         </div>
       </div>
@@ -144,17 +165,24 @@ export default function DailyTimesheet() {
           <button
             onClick={handleLockToggle}
             disabled={locking}
-            className={`mt-5 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${isLocked
-              ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
-              : 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
+            className={`mt-5 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
+              isLocked
+                ? "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
+                : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
             }`}
           >
-            {isLocked ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-            {locking ? '...' : isLocked ? 'Mở khóa ngày' : 'Khóa ngày'}
+            {isLocked ? (
+              <Unlock className="w-4 h-4" />
+            ) : (
+              <Lock className="w-4 h-4" />
+            )}
+            {locking ? "..." : isLocked ? "Mở khóa ngày" : "Khóa ngày"}
           </button>
         )}
         {isLocked && (
-          <span className="mt-5 px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">🔒 Đã khóa</span>
+          <span className="mt-5 px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700">
+            🔒 Đã khóa
+          </span>
         )}
         <div className="relative flex-1 min-w-[200px] max-w-md mt-5">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -252,16 +280,14 @@ export default function DailyTimesheet() {
               ) : records.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="text-center py-12 text-gray-400">
-                    {search
-                      ? "Không tìm thấy kết quả"
-                      : "Không có nhân viên"}
+                    {search ? "Không tìm thấy kết quả" : "Không có nhân viên"}
                   </td>
                 </tr>
               ) : (
                 records.map((r) => (
                   <tr
                     key={r.employeeId}
-                    className={`hover:bg-gray-50 transition-colors ${!r.attendanceId ? 'bg-gray-50/50' : ''}`}
+                    className={`hover:bg-gray-50 transition-colors ${!r.attendanceId ? "bg-gray-50/50" : ""}`}
                   >
                     <td className="px-4 py-3 text-xs text-gray-500 font-mono">
                       {r.employeeCode}
@@ -278,14 +304,10 @@ export default function DailyTimesheet() {
                       {r.shiftName || "—"}
                     </td>
                     <td className="px-4 py-3 text-center text-gray-700 tabular-nums">
-                      {r.checkInTime
-                        ? format(new Date(r.checkInTime), "HH:mm")
-                        : "—"}
+                      {r.checkInTime ? fmtTime(r.checkInTime) : "—"}
                     </td>
                     <td className="px-4 py-3 text-center text-gray-700 tabular-nums">
-                      {r.checkOutTime
-                        ? format(new Date(r.checkOutTime), "HH:mm")
-                        : "—"}
+                      {r.checkOutTime ? fmtTime(r.checkOutTime) : "—"}
                     </td>
                     <td className="px-4 py-3 text-center font-medium text-blue-600 tabular-nums">
                       {r.workingHours ? `${r.workingHours}h` : "—"}
@@ -302,9 +324,10 @@ export default function DailyTimesheet() {
                     <td className="px-4 py-3 text-center">
                       {r.attendanceId ? (
                         <span
-                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusStyle[r.attendanceStatus || ''] || "bg-gray-100 text-gray-600"}`}
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusStyle[r.attendanceStatus || ""] || "bg-gray-100 text-gray-600"}`}
                         >
-                          {statusLabel[r.attendanceStatus || ''] || r.attendanceStatus}
+                          {statusLabel[r.attendanceStatus || ""] ||
+                            r.attendanceStatus}
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">

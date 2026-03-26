@@ -299,7 +299,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       {/* User / Logout */}
       <div className="border-t border-gray-100 p-2">
-        {(!collapsed || isMobileView) ? (
+        {!collapsed || isMobileView ? (
           <div className="flex items-center gap-2 px-2 py-2">
             <Link
               href="/profile"
@@ -388,7 +388,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <Link href="/profile" className="p-2 rounded-lg hover:bg-gray-100">
           <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden">
             {user?.avatar ? (
-              <img src={user.avatar} alt="" className="w-full h-full object-cover" />
+              <img
+                src={user.avatar}
+                alt=""
+                className="w-full h-full object-cover"
+              />
             ) : (
               <UserCircle className="w-4 h-4 text-gray-500" />
             )}

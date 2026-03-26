@@ -2,8 +2,12 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./docs/swagger');
 
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', process.env.TRUST_PROXY || 1);
 
 function normalizeOrigin(origin) {
   return origin ? origin.replace(/\/$/, '') : origin;
@@ -44,6 +48,11 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  explorer: true,
+  customSiteTitle: 'HRM API Docs',
+}));
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
@@ -67,9 +76,39 @@ app.use('/api/export-payroll', require('./routes/exportPayroll'));
 app.use('/api/export-templates', require('./routes/exportTemplates'));
 
 // Health check
-app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+const keepAliveTimeout = parseInt(process.env.SERVER_KEEP_ALIVE_TIMEOUT_MS || '65000', 10);
+const headersTimeout = parseInt(process.env.SERVER_HEADERS_TIMEOUT_MS || '66000', 10);
+if (!Number.isNaN(keepAliveTimeout)) server.keepAliveTimeout = keepAliveTimeout;
+if (!Number.isNaN(headersTimeout)) server.headersTimeout = headersTimeout;
+
+function shutdown(signal) {
+  console.log(`Received ${signal}. Closing HTTP server...`);
+  server.close((err) => {
+    if (err) {
+      console.error('Error during server close:', err);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+
+  // Force close if connections are stuck.
+  setTimeout(() => {
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

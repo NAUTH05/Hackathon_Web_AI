@@ -24,8 +24,8 @@ function toCamelCase(row) {
     if (val instanceof Date) {
       result[camel] = val.toISOString();
     } else if (typeof val === 'string' && MYSQL_DATETIME_RE.test(val)) {
-      // "2026-03-10 08:42:47" or "2026-03-10 08:42:47.392" → ISO
-      result[camel] = val.replace(' ', 'T') + (val.includes('+') || val.endsWith('Z') ? '' : 'Z');
+      // "2026-03-10 08:42:47" → "2026-03-10T08:42:47+07:00" (Vietnam local time)
+      result[camel] = val.replace(' ', 'T') + (val.includes('+') || val.endsWith('Z') ? '' : '+07:00');
     } else {
       result[camel] = val;
     }

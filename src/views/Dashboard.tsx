@@ -15,15 +15,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-  getAttendanceRecords,
-  getEmployeesPaginated,
-  getLeaveRequests,
-  getOTRequests,
-  getPenalties,
-  getTodayAttendance,
-} from "../store/storage";
-import type { AttendanceRecord } from "../types";
+import { attendanceApi } from "../services/api";
+import { getAttendanceRecords, getPenaltiesPaginated } from "../store/storage";
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -37,7 +30,6 @@ export default function Dashboard() {
     pendingLeave: 0,
     activePenalties: 0,
   });
-  const [recentRecords, setRecentRecords] = useState<AttendanceRecord[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [heatmapData, setHeatmapData] = useState<
     Map<string, { total: number; onTime: number; late: number; absent: number }>
@@ -56,76 +48,59 @@ export default function Dashboard() {
 
   function loadData() {
     Promise.all([
-      getEmployeesPaginated({ page: '1', limit: '1', isActive: 'true' }),
-      getTodayAttendance(),
+      attendanceApi.stats(),
+      getPenaltiesPaginated({ status: "active", limit: "1" }),
       getAttendanceRecords(),
-      getOTRequests(),
-      getLeaveRequests(),
-      getPenalties(),
-    ]).then(
-      ([
-        emps,
-        todayRecords,
-        allRecords,
-        otRequests,
-        leaveRequests,
-        penalties,
-      ]) => {
-        const totalEmployees = emps.pagination.total;
-        const present = todayRecords.filter((r) => r.checkInTime).length;
-        const late = todayRecords.filter((r) => r.status === "late").length;
-        const earlyLeave = todayRecords.filter(
-          (r) => r.status === "early-leave",
-        ).length;
-        const onTime = todayRecords.filter(
-          (r) => r.status === "on-time",
-        ).length;
-        const absent = totalEmployees - present;
+    ]).then(([statsRes, penaltyRes, allRecords]) => {
+      const s = statsRes as {
+        today: {
+          totalEmployees: number;
+          checkedIn: number;
+          late: number;
+          onTime: number;
+          notCheckedIn: number;
+        };
+        pendingRequests: { overtime: number; leave: number };
+      };
+      const onTimeRate =
+        s.today.checkedIn > 0
+          ? Math.round((s.today.onTime / s.today.checkedIn) * 100)
+          : 0;
 
-        setStats({
-          totalEmployees,
-          presentToday: present,
-          lateToday: late,
-          absentToday: Math.max(0, absent),
-          earlyLeaveToday: earlyLeave,
-          onTimeRate: present > 0 ? Math.round((onTime / present) * 100) : 0,
-          pendingOT: otRequests.filter((o) => o.status === "pending").length,
-          pendingLeave: leaveRequests.filter((l) => l.status === "pending")
-            .length,
-          activePenalties: penalties.filter((p) => p.status === "active")
-            .length,
+      setStats({
+        totalEmployees: s.today.totalEmployees,
+        presentToday: s.today.checkedIn,
+        lateToday: s.today.late,
+        absentToday: s.today.notCheckedIn,
+        earlyLeaveToday: 0,
+        onTimeRate,
+        pendingOT: s.pendingRequests.overtime,
+        pendingLeave: s.pendingRequests.leave,
+        activePenalties: penaltyRes.pagination.total,
+      });
+
+      const now = new Date();
+      const monthStart = startOfMonth(now);
+      const monthEnd = endOfMonth(now);
+      const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+      const map = new Map<
+        string,
+        { total: number; onTime: number; late: number; absent: number }
+      >();
+      days.forEach((day) => {
+        const dateStr = format(day, "yyyy-MM-dd");
+        const dayRecords = (
+          allRecords as { date: string; status: string }[]
+        ).filter((r) => r.date === dateStr);
+        map.set(dateStr, {
+          total: dayRecords.length,
+          onTime: dayRecords.filter((r) => r.status === "on-time").length,
+          late: dayRecords.filter((r) => r.status === "late").length,
+          absent: dayRecords.filter((r) => r.status === "absent").length,
         });
-
-        setRecentRecords(
-          todayRecords
-            .sort((a, b) =>
-              (b.checkInTime || "").localeCompare(a.checkInTime || ""),
-            )
-            .slice(0, 10),
-        );
-
-        const now = new Date();
-        const monthStart = startOfMonth(now);
-        const monthEnd = endOfMonth(now);
-        const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
-        const map = new Map<
-          string,
-          { total: number; onTime: number; late: number; absent: number }
-        >();
-
-        days.forEach((day) => {
-          const dateStr = format(day, "yyyy-MM-dd");
-          const dayRecords = allRecords.filter((r) => r.date === dateStr);
-          map.set(dateStr, {
-            total: dayRecords.length,
-            onTime: dayRecords.filter((r) => r.status === "on-time").length,
-            late: dayRecords.filter((r) => r.status === "late").length,
-            absent: dayRecords.filter((r) => r.status === "absent").length,
-          });
-        });
-        setHeatmapData(map);
-      },
-    );
+      });
+      setHeatmapData(map);
+    });
   }
 
   const statusLabels: Record<string, string> = {
@@ -418,109 +393,6 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Recent records */}
-      <div className="mt-6 bg-white rounded-xl border border-gray-200 p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-gray-700">
-            Chấm công gần đây hôm nay
-          </h3>
-          <Link
-            href="/history"
-            className="text-xs text-primary-600 hover:underline"
-          >
-            Xem tất cả →
-          </Link>
-        </div>
-        {recentRecords.length === 0 ? (
-          <div className="text-center py-10 text-gray-400">
-            <p>Chưa có dữ liệu chấm công hôm nay</p>
-            <Link
-              href="/attendance"
-              className="text-primary-600 hover:underline text-sm mt-2 inline-block"
-            >
-              Bắt đầu chấm công →
-            </Link>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">
-                    Nhân viên
-                  </th>
-                  <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">
-                    Ca
-                  </th>
-                  <th className="text-center py-2 px-3 text-xs font-semibold text-gray-500">
-                    Giờ vào
-                  </th>
-                  <th className="text-center py-2 px-3 text-xs font-semibold text-gray-500">
-                    Giờ ra
-                  </th>
-                  <th className="text-center py-2 px-3 text-xs font-semibold text-gray-500">
-                    Muộn (phút)
-                  </th>
-                  <th className="text-center py-2 px-3 text-xs font-semibold text-gray-500">
-                    Trạng thái
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {recentRecords.map((record) => (
-                  <tr
-                    key={record.id}
-                    className="hover:bg-gray-50 transition-colors"
-                  >
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center">
-                          <span className="text-xs font-bold text-primary-700">
-                            {record.employeeName.charAt(0)}
-                          </span>
-                        </div>
-                        <span className="text-sm font-medium text-gray-900">
-                          {record.employeeName}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3 text-sm text-gray-600">
-                      {record.shiftName}
-                    </td>
-                    <td className="py-2.5 px-3 text-center text-sm text-gray-600 tabular-nums">
-                      {record.checkInTime
-                        ? format(new Date(record.checkInTime), "HH:mm")
-                        : "--:--"}
-                    </td>
-                    <td className="py-2.5 px-3 text-center text-sm text-gray-600 tabular-nums">
-                      {record.checkOutTime
-                        ? format(new Date(record.checkOutTime), "HH:mm")
-                        : "--:--"}
-                    </td>
-                    <td className="py-2.5 px-3 text-center text-sm tabular-nums">
-                      {record.lateMinutes > 0 ? (
-                        <span className="text-yellow-600 font-medium">
-                          {record.lateMinutes}p
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusStyles[record.status] || "bg-gray-100 text-gray-600"}`}
-                      >
-                        {statusLabels[record.status] || record.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
     </div>
   );
