@@ -3,6 +3,8 @@ import { vi } from "date-fns/locale";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Loader2,
   LogIn,
@@ -10,21 +12,31 @@ import {
   MapPin,
   Monitor,
   Navigation,
+  Search,
   Shield,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { showToast } from "../components/Toast";
 import { useAuth } from "../contexts/AuthContext";
 import {
   checkIn,
   checkOut,
   getEmployeesPaginated,
   getShifts,
-  getTodayAttendance,
+  getTodayAttendancePaginated,
   isWithinCompanyRange,
 } from "../store/storage";
 import type { AttendanceRecord, Employee, Shift } from "../types";
-import { showToast } from "../components/Toast";
+
+// DB datetime comes from API as "YYYY-MM-DDTHH:mm:ss+07:00" (Vietnam local time).
+// Extract time part directly to avoid any browser timezone conversion.
+const fmtTime = (dt: string | undefined | null): string => {
+  if (!dt) return "--:--";
+  const sep = dt.includes("T") ? "T" : " ";
+  const time = (dt.split(sep)[1] ?? "").replace(/[+Z].*$/, "");
+  return time.slice(0, 5) || "--:--";
+};
 
 type Mode = "check-in" | "check-out";
 type GPSState =
@@ -59,8 +71,9 @@ function detectDevTools(callback: () => void): () => void {
       // ignore
     }
     const duration = performance.now() - start;
-    // If debugger took >100ms, DevTools is likely open
-    if (duration > 100 && !devToolsOpen) {
+    // If debugger took >500ms, DevTools is likely open
+    // 100ms was too low — low-end phones can compile new Function() slowly
+    if (duration > 500 && !devToolsOpen) {
       devToolsOpen = true;
       callback();
     }
@@ -71,7 +84,9 @@ function detectDevTools(callback: () => void): () => void {
 }
 
 export default function Attendance() {
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, roleLevel, logout } = useAuth();
+  // level 1 (admin), 2 (GĐ), 3 (TP/PP) có thể chọn nhân viên để chấm hộ
+  const canSelectEmployee = roleLevel <= 3;
 
   const [mode, setMode] = useState<Mode>("check-in");
   const [gpsState, setGpsState] = useState<GPSState>("idle");
@@ -93,7 +108,15 @@ export default function Attendance() {
     "success" | "error" | "warning" | "info"
   >("info");
   const [processing, setProcessing] = useState(false);
-  const [isMobile, setIsMobile] = useState(true); // assume mobile until checked
+  const [isMobile, setIsMobile] = useState(true);
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
+  // Today attendance — paginated
+  const [todayPage, setTodayPage] = useState(1);
+  const [todayTotal, setTodayTotal] = useState(0);
+  const [todayTotalPages, setTodayTotalPages] = useState(1);
+  const [todayLoading, setTodayLoading] = useState(false);
+  const TODAY_LIMIT = 15;
 
   // Check if device is mobile (client-side only)
   useEffect(() => {
@@ -103,42 +126,67 @@ export default function Attendance() {
   // Detect developer mode — if DevTools open on mobile, force logout
   const handleDevToolsDetected = useCallback(() => {
     showToast(
-      'error',
-      'Cảnh báo',
-      'Phát hiện chế độ nhà phát triển. Bạn sẽ bị đăng xuất.'
+      "error",
+      "Cảnh báo",
+      "Phát hiện chế độ nhà phát triển. Bạn sẽ bị đăng xuất.",
     );
     setTimeout(() => logout(), 2000);
   }, [logout]);
 
   useEffect(() => {
     if (!isMobile) return; // only check on mobile
+    if (isAdmin) return; // admin không bị giới hạn DevTools
     const cleanup = detectDevTools(handleDevToolsDetected);
     return cleanup;
-  }, [isMobile, handleDevToolsDetected]);
+  }, [isMobile, isAdmin, handleDevToolsDetected]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
+  // Load today records cho 1 page
+  const loadTodayPage = useCallback(
+    async (page: number) => {
+      setTodayLoading(true);
+      try {
+        const res = await getTodayAttendancePaginated(page, TODAY_LIMIT);
+        setTodayRecords(res.data);
+        setTodayPage(res.pagination.page);
+        setTodayTotal(res.pagination.total);
+        setTodayTotalPages(res.pagination.totalPages);
+      } finally {
+        setTodayLoading(false);
+      }
+    },
+    [TODAY_LIMIT],
+  );
+
   useEffect(() => {
     async function init() {
       const s = await getShifts();
-      const res = await getEmployeesPaginated({ limit: '50', isActive: 'true' });
+      // Load all employees (backend auto-filters by department for level 3)
+      const res = await getEmployeesPaginated({
+        limit: "10000",
+        isActive: "true",
+      });
       const e = res.data;
       setShifts(s);
       setEmployees(e);
-      setTodayRecords(await getTodayAttendance());
+      await loadTodayPage(1);
       if (s.length > 0) setSelectedShift(s[0].id);
 
-      if (!isAdmin && user?.employeeId) {
+      if (!canSelectEmployee && user?.employeeId) {
+        // nhân viên thường: chỉ chấm cho bản thân
         setSelectedEmployee(user.employeeId);
-      } else if (isAdmin && e.length > 0) {
+      } else if (canSelectEmployee && e.length > 0) {
+        // admin / GĐ / TP: mặc định chọn nhân viên đầu tiên
         setSelectedEmployee(e[0].id);
+        setEmployeeSearch(`${e[0].employeeCode} - ${e[0].name}`);
       }
     }
     init();
-  }, [user]);
+  }, [user, loadTodayPage]);
 
   function checkGPS() {
     setGpsState("locating");
@@ -224,7 +272,7 @@ export default function Attendance() {
         );
         setResultType(isEarly ? "warning" : "success");
       }
-      setTodayRecords(await getTodayAttendance());
+      await loadTodayPage(1); // refresh về trang đầu sau khi chấm
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Loi cham cong";
       setResultMessage(msg);
@@ -267,8 +315,8 @@ export default function Attendance() {
     }
   };
 
-  // If not mobile, show blocked UI
-  if (!isMobile) {
+  // Admin có thể dùng laptop; các level khác bắt buộc mobile
+  if (!isMobile && !isAdmin) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
         <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-8 max-w-md">
@@ -352,20 +400,72 @@ export default function Attendance() {
                 ))}
               </select>
 
-              {/* Employee select (admin only can choose) */}
-              {isAdmin && (
-                <select
-                  value={selectedEmployee}
-                  onChange={(e) => setSelectedEmployee(e.target.value)}
-                  className="flex-1 text-sm border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  {employees.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.name} ({e.employeeCode})
-                    </option>
-                  ))}
-                </select>
-              )}
+              {/* Employee search (admin / GĐ / TP có thể chọn nhân viên) */}
+              {canSelectEmployee &&
+                (() => {
+                  const q = employeeSearch.trim().toLowerCase();
+                  const filtered = q
+                    ? employees
+                        .filter(
+                          (e) =>
+                            e.employeeCode.toLowerCase().includes(q) ||
+                            e.name.toLowerCase().includes(q),
+                        )
+                        .slice(0, 20)
+                    : employees.slice(0, 20);
+                  return (
+                    <div className="relative">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        <input
+                          type="text"
+                          placeholder="Tìm mã hoặc tên nhân viên..."
+                          value={employeeSearch}
+                          onChange={(e) => {
+                            setEmployeeSearch(e.target.value);
+                            setShowEmployeeDropdown(true);
+                          }}
+                          onFocus={() => setShowEmployeeDropdown(true)}
+                          onBlur={() =>
+                            setTimeout(
+                              () => setShowEmployeeDropdown(false),
+                              200,
+                            )
+                          }
+                          className="w-full text-sm border border-gray-200 rounded-xl pl-9 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </div>
+                      {showEmployeeDropdown && filtered.length > 0 && (
+                        <div className="absolute z-20 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-48 overflow-y-auto">
+                          {filtered.map((e) => (
+                            <button
+                              key={e.id}
+                              type="button"
+                              onMouseDown={() => {
+                                setSelectedEmployee(e.id);
+                                setEmployeeSearch(
+                                  `${e.employeeCode} - ${e.name}`,
+                                );
+                                setShowEmployeeDropdown(false);
+                              }}
+                              className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
+                            >
+                              <span className="font-mono text-primary-600 mr-2">
+                                {e.employeeCode}
+                              </span>
+                              <span className="text-gray-800">{e.name}</span>
+                              {roleLevel <= 2 && (
+                                <span className="text-xs text-gray-400 ml-1">
+                                  ({e.department})
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
             </div>
           </div>
 
@@ -409,7 +509,8 @@ export default function Attendance() {
             </div>
             {currentCoords && (
               <div className="mt-2 text-[11px] opacity-60 font-mono">
-                {Number(currentCoords.lat).toFixed(6)}, {Number(currentCoords.lon).toFixed(6)}
+                {Number(currentCoords.lat).toFixed(6)},{" "}
+                {Number(currentCoords.lon).toFixed(6)}
               </div>
             )}
           </div>
@@ -466,83 +567,141 @@ export default function Attendance() {
         </div>
 
         {/* Sidebar — today's records */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-          <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-gray-400" />
-            Chấm công hôm nay ({todayRecords.length})
-          </h3>
-          {todayRecords.length === 0 ? (
-            <div className="text-center py-12 text-gray-400">
-              <MapPin className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Chưa có dữ liệu</p>
-            </div>
-          ) : (
-            <div className="space-y-2.5 max-h-[520px] overflow-y-auto">
-              {todayRecords
-                .sort((a, b) =>
-                  (b.checkInTime || "").localeCompare(a.checkInTime || ""),
-                )
-                .map((record) => (
-                  <div
-                    key={record.id}
-                    className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-bold text-primary-700">
-                        {record.employeeName.charAt(0)}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {record.employeeName}
-                      </p>
-                      <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <span className="flex items-center gap-0.5">
-                          <LogIn className="w-3 h-3" />
-                          {record.checkInTime
-                            ? format(new Date(record.checkInTime), "HH:mm")
-                            : "--:--"}
-                        </span>
-                        <span className="text-gray-300">→</span>
-                        <span className="flex items-center gap-0.5">
-                          <LogOut className="w-3 h-3" />
-                          {record.checkOutTime
-                            ? format(new Date(record.checkOutTime), "HH:mm")
-                            : "--:--"}
-                        </span>
-                        {record.lateMinutes > 0 && (
-                          <span className="text-yellow-600 font-medium">
-                            +{record.lateMinutes}p
-                          </span>
-                        )}
-                        {record.workingHours > 0 && (
-                          <span className="text-blue-600">
-                            {record.workingHours}h
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                        record.status === "on-time"
-                          ? "bg-green-100 text-green-700"
-                          : record.status === "late"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : record.status === "early-leave"
-                              ? "bg-orange-100 text-orange-700"
-                              : "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {record.status === "on-time"
-                        ? "Đúng giờ"
-                        : record.status === "late"
-                          ? "Muộn"
-                          : record.status === "early-leave"
-                            ? "Về sớm"
-                            : "Chờ"}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-400" />
+              Chấm công hôm nay
+              <span className="bg-primary-100 text-primary-700 text-xs font-bold px-2 py-0.5 rounded-full">
+                {todayTotal.toLocaleString("vi-VN")}
+              </span>
+            </h3>
+            {todayLoading && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+            )}
+          </div>
+
+          {/* List */}
+          <div className="divide-y divide-gray-50">
+            {todayRecords.length === 0 && !todayLoading ? (
+              <div className="text-center py-10 text-gray-400">
+                <MapPin className="w-7 h-7 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Chưa có dữ liệu</p>
+              </div>
+            ) : (
+              todayRecords.map((record) => (
+                <div
+                  key={record.id}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
+                >
+                  {/* Avatar */}
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shrink-0">
+                    <span className="text-xs font-bold text-white">
+                      {record.employeeName.charAt(0)}
                     </span>
                   </div>
-                ))}
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate leading-tight">
+                      {record.employeeName}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400 tabular-nums">
+                      <LogIn className="w-3 h-3" />
+                      <span>
+                        {record.checkInTime
+                          ? fmtTime(record.checkInTime)
+                          : "--:--"}
+                      </span>
+                      <span className="text-gray-200">·</span>
+                      <LogOut className="w-3 h-3" />
+                      <span>
+                        {record.checkOutTime
+                          ? fmtTime(record.checkOutTime)
+                          : "--:--"}
+                      </span>
+                      {record.workingHours > 0 && (
+                        <>
+                          <span className="text-gray-200">·</span>
+                          <span className="text-blue-500">
+                            {record.workingHours}h
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Status badge */}
+                  <span
+                    className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                      record.status === "on-time"
+                        ? "bg-green-100 text-green-700"
+                        : record.status === "late"
+                          ? "bg-yellow-100 text-yellow-700"
+                          : record.status === "early-leave"
+                            ? "bg-orange-100 text-orange-700"
+                            : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {record.status === "on-time"
+                      ? "Đúng giờ"
+                      : record.status === "late"
+                        ? `+${record.lateMinutes}p`
+                        : record.status === "early-leave"
+                          ? "Về sớm"
+                          : "Chờ"}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Pagination */}
+          {todayTotalPages > 1 && (
+            <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
+              <span className="text-xs text-gray-400">
+                Trang {todayPage}/{todayTotalPages}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => loadTodayPage(todayPage - 1)}
+                  disabled={todayPage <= 1 || todayLoading}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4 text-gray-600" />
+                </button>
+                {/* Page numbers — show max 3 around current */}
+                {Array.from(
+                  { length: Math.min(todayTotalPages, 5) },
+                  (_, i) => {
+                    const start = Math.max(1, todayPage - 2);
+                    const p = start + i;
+                    if (p > todayTotalPages) return null;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => loadTodayPage(p)}
+                        disabled={todayLoading}
+                        className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${
+                          p === todayPage
+                            ? "bg-primary-600 text-white"
+                            : "hover:bg-gray-100 text-gray-600"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  },
+                )}
+                <button
+                  onClick={() => loadTodayPage(todayPage + 1)}
+                  disabled={todayPage >= todayTotalPages || todayLoading}
+                  className="p-1.5 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronRight className="w-4 h-4 text-gray-600" />
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -49,6 +49,11 @@ router.get('/', authenticate, async (req, res) => {
       where += ` AND DATE_FORMAT(ar.date, '%Y-%m') = ?`;
     }
 
+    if (req.query.status) {
+      params.push(req.query.status);
+      where += ` AND ar.status = ?`;
+    }
+
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 30));
     const offset = (page - 1) * limit;
@@ -184,17 +189,31 @@ router.get('/export', authenticate, async (req, res) => {
 router.get('/today', authenticate, async (req, res) => {
   try {
     const today = getVietnamNow().today;
-    let query = `SELECT * FROM attendance_records WHERE date = ?`;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    let where = `WHERE date = ?`;
     const params = [today];
 
     if (req.user.role !== 'admin') {
       params.push(req.user.employeeId);
-      query += ` AND employee_id = ?`;
+      where += ` AND employee_id = ?`;
     }
 
-    query += ' ORDER BY check_in_time DESC';
-    const [rows] = await pool.execute(query, params);
-    res.json(toCamelCaseArray(rows));
+    const [[{ total }]] = await pool.execute(
+      `SELECT COUNT(*) AS total FROM attendance_records ${where}`, params
+    );
+
+    const [rows] = await pool.execute(
+      `SELECT * FROM attendance_records ${where} ORDER BY check_in_time DESC LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+
+    res.json({
+      data: toCamelCaseArray(rows),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
   } catch (err) {
     console.error('Get today attendance error:', err);
     res.status(500).json({ error: 'Lỗi server' });
@@ -299,13 +318,26 @@ router.post('/check-in', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Chỉ cho phép chấm công từ điện thoại di động. Vui lòng sử dụng điện thoại để chấm công.' });
     }
 
-    const { employeeId, checkInImage, latitude, longitude, shiftId: requestedShiftId } = req.body;
+    const { employeeId, checkInImage, latitude, longitude, shiftId: requestedShiftId, checkInTime: overrideTime } = req.body;
     const empId = employeeId || req.user.employeeId;
     const vn = getVietnamNow();
     const today = vn.today;
     const now = vn.dateObj;
 
-    console.log('[CHECK-IN] empId=%s, requestedShiftId=%s, vnTime=%s %s', empId, requestedShiftId, today, vn.timeStr);
+    // Optional: admin-only time override for load testing / backdated correction.
+    // Regular employees never send this field → zero impact on normal usage.
+    // Non-admin requests that include this field have it silently ignored.
+    let effectiveTime = vn;
+    if (overrideTime && req.user.role === 'admin') {
+      const p = String(overrideTime).split(':').map(Number);
+      const oh = p[0] || 0, om = p[1] || 0, os = p[2] || 0;
+      if (!isNaN(oh) && !isNaN(om)) {
+        const pad = (n) => String(n).padStart(2, '0');
+        effectiveTime = { ...vn, hour: oh, minute: om, second: os, totalMinutes: oh * 60 + om, timeStr: `${pad(oh)}:${pad(om)}:${pad(os)}` };
+      }
+    }
+
+    console.log('[CHECK-IN] empId=%s, requestedShiftId=%s, vnTime=%s %s (override=%s)', empId, requestedShiftId, today, effectiveTime.timeStr, overrideTime || 'none');
 
     // Check if already checked in today
     const [existing] = await pool.execute(
@@ -379,13 +411,13 @@ router.post('/check-in', authenticate, async (req, res) => {
       const timeParts = startTime.split(':').map(Number);
       const shiftH = timeParts[0];
       const shiftM = timeParts[1] || 0;
-      console.log('[CHECK-IN] shift.start_time=%s, shiftH=%d, shiftM=%d, vnHour=%d, vnMin=%d', startTime, shiftH, shiftM, vn.hour, vn.minute);
+      console.log('[CHECK-IN] shift.start_time=%s, shiftH=%d, shiftM=%d, vnHour=%d, vnMin=%d', startTime, shiftH, shiftM, effectiveTime.hour, effectiveTime.minute);
 
       if (!isNaN(shiftH) && !isNaN(shiftM)) {
         const shiftStartMinutes = shiftH * 60 + shiftM;
-        lateMinutes = Math.max(0, vn.totalMinutes - shiftStartMinutes);
+        lateMinutes = Math.max(0, effectiveTime.totalMinutes - shiftStartMinutes);
         const allowLate = parseInt(shift.allow_late_minutes) || 15;
-        console.log('[CHECK-IN] shiftStartMin=%d, vnTotalMin=%d, lateMin=%d, allowLate=%d', shiftStartMinutes, vn.totalMinutes, lateMinutes, allowLate);
+        console.log('[CHECK-IN] shiftStartMin=%d, vnTotalMin=%d, lateMin=%d, allowLate=%d', shiftStartMinutes, effectiveTime.totalMinutes, lateMinutes, allowLate);
         if (lateMinutes > allowLate) {
           status = 'late';
         }
@@ -396,7 +428,7 @@ router.post('/check-in', authenticate, async (req, res) => {
 
     const id = uuidv4();
     // Store check-in time in Vietnam local time for DB
-    const checkInTimeStr = `${today} ${vn.timeStr}`;
+    const checkInTimeStr = `${today} ${effectiveTime.timeStr}`;
     await pool.execute(
       `INSERT INTO attendance_records (id, employee_id, employee_name, date, shift_id, shift_name, check_in_time, check_in_image, status, late_minutes, note)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -423,7 +455,7 @@ router.post('/check-in', authenticate, async (req, res) => {
       action: 'check-in',
       performedBy: employee.name,
       targetEmployee: employee.name,
-      details: `Check-in lúc ${vn.timeStr} - ${status === 'late' ? `Muộn ${lateMinutes} phút` : 'Đúng giờ'}`,
+      details: `Check-in lúc ${effectiveTime.timeStr} - ${status === 'late' ? `Muộn ${lateMinutes} phút` : 'Đúng giờ'}`,
     });
 
     res.status(201).json(toCamelCase(rows[0]));
@@ -442,10 +474,21 @@ router.post('/check-out', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Chỉ cho phép chấm công từ điện thoại di động. Vui lòng sử dụng điện thoại để chấm công.' });
     }
 
-    const { employeeId, checkOutImage } = req.body;
+    const { employeeId, checkOutImage, checkOutTime: overrideOutTime } = req.body;
     const empId = employeeId || req.user.employeeId;
     const vn = getVietnamNow();
     const today = vn.today;
+
+    // Admin override: fake checkout time (field-based, opt-in)
+    let effectiveOutTime = vn;
+    if (overrideOutTime && req.user.role === 'admin') {
+      const p = String(overrideOutTime).split(':').map(Number);
+      const oh = p[0] || 0, om = p[1] || 0, os = p[2] || 0;
+      if (!isNaN(oh) && !isNaN(om)) {
+        const pad = (n) => String(n).padStart(2, '0');
+        effectiveOutTime = { ...vn, hour: oh, minute: om, second: os, totalMinutes: oh * 60 + om, timeStr: `${pad(oh)}:${pad(om)}:${pad(os)}` };
+      }
+    }
 
     // Find today's record
     const [existingRows] = await pool.execute(
@@ -468,7 +511,7 @@ router.post('/check-out', authenticate, async (req, res) => {
         const [endH, endM] = shift.end_time.split(':').map(Number);
         const shiftEndMinutes = endH * 60 + endM;
 
-        earlyLeaveMinutes = Math.max(0, shiftEndMinutes - vn.totalMinutes);
+        earlyLeaveMinutes = Math.max(0, shiftEndMinutes - effectiveOutTime.totalMinutes);
         if (earlyLeaveMinutes > (parseInt(shift.allow_early_leave_minutes) || 10)) {
           status = 'early-leave';
         }
@@ -480,7 +523,7 @@ router.post('/check-out', authenticate, async (req, res) => {
     const ciTimePart = ciStr.includes(' ') ? ciStr.split(' ')[1] : ciStr.split('T')[1]?.replace('Z', '') || '00:00:00';
     const [ciH, ciM, ciS] = ciTimePart.split(':').map(Number);
     const ciTotalMin = ciH * 60 + ciM + (ciS || 0) / 60;
-    let workingMin = vn.totalMinutes + vn.second / 60 - ciTotalMin;
+    let workingMin = effectiveOutTime.totalMinutes + effectiveOutTime.second / 60 - ciTotalMin;
 
     // Subtract break time if applicable
     if (record.shift_id) {
@@ -497,7 +540,7 @@ router.post('/check-out', authenticate, async (req, res) => {
     }
 
     const workingHours = Math.max(0, workingMin / 60).toFixed(2);
-    const checkOutTimeStr = `${today} ${vn.timeStr}`;
+    const checkOutTimeStr = `${today} ${effectiveOutTime.timeStr}`;
 
     await pool.execute(
       `UPDATE attendance_records SET
@@ -518,7 +561,7 @@ router.post('/check-out', authenticate, async (req, res) => {
       action: 'check-out',
       performedBy: empName,
       targetEmployee: empName,
-      details: `Check-out lúc ${vn.timeStr} - Làm ${workingHours}h${earlyLeaveMinutes > 0 ? ` - Về sớm ${earlyLeaveMinutes} phút` : ''}`,
+      details: `Check-out lúc ${effectiveOutTime.timeStr} - Làm ${workingHours}h${earlyLeaveMinutes > 0 ? ` - Về sớm ${earlyLeaveMinutes} phút` : ''}`,
     });
 
     res.json(toCamelCase(rows[0]));

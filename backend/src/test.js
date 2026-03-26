@@ -21,7 +21,10 @@ function request(method, path, body, token) {
       port: url.port,
       path: url.pathname + url.search,
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1'
+      },
     };
     if (token) options.headers['Authorization'] = `Bearer ${token}`;
 
@@ -93,10 +96,11 @@ async function testEmployees() {
 
   // List
   let res = await request('GET', '/employees', null, adminToken);
+  const employeeData = res.data?.data || res.data;
   assert('GET /employees — status 200', res.status === 200);
-  assert('GET /employees — is array', Array.isArray(res.data));
-  assert('GET /employees — has camelCase (employeeCode)', res.data.length > 0 && 'employeeCode' in res.data[0]);
-  assert('GET /employees — has department join', res.data.length > 0 && 'department' in res.data[0]);
+  assert('GET /employees — is array', Array.isArray(employeeData));
+  assert('GET /employees — has camelCase (employeeCode)', employeeData.length > 0 && 'employeeCode' in employeeData[0]);
+  assert('GET /employees — has department join', employeeData.length > 0 && 'department' in employeeData[0]);
 
   // Get single
   res = await request('GET', '/employees/emp-001', null, adminToken);
@@ -226,8 +230,9 @@ async function testAttendance() {
 
   // Get today
   res = await request('GET', '/attendance/today', null, adminToken);
+  const todayData = res.data?.data || res.data;
   assert('GET /attendance/today — status 200', res.status === 200);
-  assert('GET /attendance/today — is array', Array.isArray(res.data));
+  assert('GET /attendance/today — is array', Array.isArray(todayData));
 
   // Get all
   res = await request('GET', '/attendance', null, adminToken);
@@ -258,8 +263,9 @@ async function testOvertime() {
 
   // List
   res = await request('GET', '/overtime', null, adminToken);
+  const otData = res.data?.data || res.data;
   assert('GET /overtime — status 200', res.status === 200);
-  assert('GET /overtime — is array', Array.isArray(res.data));
+  assert('GET /overtime — is array', Array.isArray(otData));
 
   // Approve
   res = await request('PUT', `/overtime/${otId}`, { status: 'approved' }, adminToken);
@@ -369,9 +375,10 @@ async function testTimesheets() {
 
   // Generate
   let res = await request('POST', '/timesheets/generate', { month: '2026-03' }, adminToken);
+  const tsData = res.data?.data || res.data;
   assert('POST /timesheets/generate — status 200', res.status === 200);
-  assert('POST /timesheets/generate — is array', Array.isArray(res.data));
-  assert('POST /timesheets/generate — has data', res.data.length > 0);
+  assert('POST /timesheets/generate — is array', Array.isArray(tsData));
+  assert('POST /timesheets/generate — has data', tsData.length > 0);
 
   // Get
   res = await request('GET', '/timesheets?month=2026-03', null, adminToken);
@@ -431,10 +438,11 @@ async function testAuditLogs() {
   console.log('\n=== AUDIT LOGS ===');
 
   let res = await request('GET', '/audit-logs', null, adminToken);
+  const auditData = res.data?.data || res.data;
   assert('GET /audit-logs — status 200', res.status === 200);
-  assert('GET /audit-logs — is array', Array.isArray(res.data));
-  assert('GET /audit-logs — has entries', res.data.length > 0);
-  assert('GET /audit-logs — has camelCase (performedBy)', 'performedBy' in (res.data[0] || {}));
+  assert('GET /audit-logs — is array', Array.isArray(auditData));
+  assert('GET /audit-logs — has entries', auditData.length > 0);
+  assert('GET /audit-logs — has camelCase (performedBy)', 'performedBy' in (auditData[0] || {}));
 
   // User cannot access audit logs
   res = await request('GET', '/audit-logs', null, userToken);

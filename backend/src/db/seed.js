@@ -65,7 +65,16 @@ async function seed() {
       .filter(s => s.length > 0);
 
     for (const stmt of statements) {
-      await connection.execute(stmt);
+      try {
+        await connection.execute(stmt);
+      } catch (err) {
+        // Ignore duplicate key/index errors if they already exist
+        if (err.code === 'ER_DUP_KEYNAME' || err.code === 'ER_DUP_FIELDNAME') {
+          console.log(`⚠️ Skipping statement (already exists): ${stmt.substring(0, 50)}...`);
+        } else {
+          throw err;
+        }
+      }
     }
 
     // Add FK for departments.manager_id -> employees.id (idempotent)

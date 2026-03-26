@@ -136,8 +136,14 @@ export async function getAttendanceRecordsPaginated(params?: Record<string, stri
   return { data: cast<AttendanceRecord>(res.data), pagination: res.pagination };
 }
 
+export async function getTodayAttendancePaginated(page = 1, limit = 20): Promise<{ data: AttendanceRecord[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
+  const res = await attendanceApi.today({ page: String(page), limit: String(limit) });
+  return { data: cast<AttendanceRecord>(res.data), pagination: res.pagination };
+}
+
 export async function getTodayAttendance(): Promise<AttendanceRecord[]> {
-  return cast<AttendanceRecord>(await attendanceApi.today());
+  const res = await attendanceApi.today({ limit: '20' });
+  return cast<AttendanceRecord>(res.data);
 }
 
 export async function getAttendanceByMonth(yearMonth: string): Promise<AttendanceRecord[]> {

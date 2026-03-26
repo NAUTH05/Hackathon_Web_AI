@@ -24,8 +24,8 @@ function toCamelCase(row) {
     if (val instanceof Date) {
       result[camel] = val.toISOString();
     } else if (typeof val === 'string' && MYSQL_DATETIME_RE.test(val)) {
-      // "2026-03-10 08:42:47" or "2026-03-10 08:42:47.392" → ISO
-      result[camel] = val.replace(' ', 'T') + (val.includes('+') || val.endsWith('Z') ? '' : 'Z');
+      // "2026-03-10 08:42:47" → "2026-03-10T08:42:47+07:00" (Vietnam local time)
+      result[camel] = val.replace(' ', 'T') + (val.includes('+') || val.endsWith('Z') ? '' : '+07:00');
     } else {
       result[camel] = val;
     }
@@ -34,6 +34,10 @@ function toCamelCase(row) {
 }
 
 function toCamelCaseArray(rows) {
+  if (!Array.isArray(rows)) {
+    console.error('toCamelCaseArray: expected array, got', typeof rows, rows);
+    return [];
+  }
   return rows.map(toCamelCase);
 }
 
@@ -49,4 +53,5 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+console.log('Helpers loaded: logAudit, toCamelCase, toCamelCaseArray, haversineDistance');
 module.exports = { logAudit, toCamelCase, toCamelCaseArray, haversineDistance };
