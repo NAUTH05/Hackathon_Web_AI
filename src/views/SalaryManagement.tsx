@@ -11,6 +11,7 @@ import {
   Save,
   Search,
   Settings,
+  Shield,
   Star,
   Trash2,
   Unlock,
@@ -60,9 +61,21 @@ type Tab =
   | "presets"
   | "assign"
   | "coefficients"
+  | "rules"
+  | "deductions"
   | "benefits"
   | "permissions"
   | "export";
+
+type PayrollRule = {
+  id: string;
+  rule_type: string;
+  name: string;
+  description: string;
+  config: Record<string, unknown>;
+  priority: number;
+  is_active: number;
+};
 
 export default function SalaryManagement() {
   const { user, isAdmin, isSalaryManager } = useAuth();
@@ -307,6 +320,30 @@ export default function SalaryManagement() {
       color: "orange",
       desc: "Khấu trừ từ quản lý phạt",
     },
+    {
+      id: "effective_hours",
+      label: "Giờ làm hiệu dụng",
+      color: "cyan",
+      desc: "Giờ làm sau khi trừ đi trễ (theo rule engine)",
+    },
+    {
+      id: "late_hours_deducted",
+      label: "Giờ bị trừ (đi trễ)",
+      color: "rose",
+      desc: "Số giờ bị trừ do đi trễ",
+    },
+    {
+      id: "late_count",
+      label: "Số lần đi trễ",
+      color: "red",
+      desc: "Tổng số lần đi trễ trong tháng",
+    },
+    {
+      id: "total_late_minutes",
+      label: "Tổng phút đi trễ",
+      color: "red",
+      desc: "Tổng số phút đi trễ trong tháng",
+    },
   ] as const;
 
   // Combine built-in + custom variable blocks
@@ -329,6 +366,7 @@ export default function SalaryManagement() {
     rose: "bg-rose-100 text-rose-800 border-rose-200",
     indigo: "bg-indigo-100 text-indigo-800 border-indigo-200",
     pink: "bg-pink-100 text-pink-800 border-pink-200",
+    cyan: "bg-cyan-100 text-cyan-800 border-cyan-200",
   };
 
   async function addCustomVar() {
@@ -415,6 +453,10 @@ export default function SalaryManagement() {
     late_days: 2,
     late_penalty_rate: presetForm.latePenaltyPerDay || 50000,
     deductions: 0,
+    effective_hours: 158,
+    late_hours_deducted: 2,
+    late_count: 3,
+    total_late_minutes: 120,
     ...Object.fromEntries(customVars.map(v => [v.id, v.value])),
   };
 
@@ -490,13 +532,15 @@ export default function SalaryManagement() {
     { key: "preset", label: "Preset", visible: true, order: 3 },
     { key: "base_salary", label: "Lương CB", visible: true, order: 4 },
     { key: "total_working_hours", label: "Tổng giờ làm", visible: true, order: 5 },
-    { key: "present_days", label: "Ngày công", visible: true, order: 6 },
-    { key: "ot", label: "OT", visible: true, order: 7 },
-    { key: "allowances", label: "Phụ cấp", visible: true, order: 8 },
-    { key: "deductions", label: "Khấu trừ", visible: true, order: 9 },
-    { key: "late_penalty", label: "Phạt trễ", visible: true, order: 10 },
-    { key: "gross_salary", label: "Lương trước thuế", visible: true, order: 11 },
-    { key: "net_salary", label: "Lương ròng", visible: true, order: 12 },
+    { key: "effective_hours", label: "Giờ hiệu dụng", visible: false, order: 6 },
+    { key: "present_days", label: "Ngày công", visible: true, order: 7 },
+    { key: "ot", label: "OT", visible: true, order: 8 },
+    { key: "allowances", label: "Phụ cấp", visible: true, order: 9 },
+    { key: "deductions", label: "Khấu trừ", visible: true, order: 10 },
+    { key: "late_penalty", label: "Phạt trễ", visible: true, order: 11 },
+    { key: "rule_details", label: "Ràng buộc", visible: false, order: 12 },
+    { key: "gross_salary", label: "Lương trước thuế", visible: true, order: 13 },
+    { key: "net_salary", label: "Lương ròng", visible: true, order: 14 },
   ];
 
   // OT adjustment popup
@@ -651,6 +695,8 @@ export default function SalaryManagement() {
   useEffect(() => {
     if (tab === "salary") loadSalaryRecords();
     if (tab === "coefficients") loadCoefficients();
+    if (tab === "rules") loadPayrollRules();
+    if (tab === "deductions") loadDeductionItems();
     if (tab === "permissions") loadPermissions();
   }, [tab, loadSalaryRecords]);
 
@@ -710,6 +756,258 @@ export default function SalaryManagement() {
     } catch (err) {
       console.error("Load coefficients error:", err);
     }
+  }
+
+  // ============ Payroll Rules ============
+  const [payrollRules, setPayrollRules] = useState<PayrollRule[]>([]);
+  const [editingRule, setEditingRule] = useState<PayrollRule | null>(null);
+  const [showRuleForm, setShowRuleForm] = useState(false);
+  const [ruleForm, setRuleForm] = useState({
+    rule_type: "late_policy" as string,
+    name: "",
+    description: "",
+    priority: 10,
+    is_active: true,
+    config: {} as Record<string, unknown>,
+  });
+
+  const RULE_TYPE_META: Record<string, { label: string; color: string; fields: { key: string; label: string; type: string; placeholder: string; step?: string }[] }> = {
+    late_policy: {
+      label: "Chính sách đi trễ",
+      color: "text-orange-600 bg-orange-50 border-orange-200",
+      fields: [
+        { key: "grace_minutes", label: "Ân hạn (phút)", type: "number", placeholder: "5", step: "1" },
+        { key: "conversion_rate", label: "Tỷ lệ quy đổi (1 = 1:1)", type: "number", placeholder: "1", step: "0.1" },
+        { key: "description_template", label: "Mẫu mô tả", type: "text", placeholder: "Trễ {late_minutes} phút → trừ {deducted_hours}h làm" },
+      ],
+    },
+    min_hours_policy: {
+      label: "Ngưỡng giờ tối thiểu",
+      color: "text-blue-600 bg-blue-50 border-blue-200",
+      fields: [
+        { key: "required_hours", label: "Giờ tối thiểu/tháng", type: "number", placeholder: "160", step: "1" },
+        { key: "penalty_rate", label: "Hệ số giảm lương (VD: 0.7 = giảm 30%)", type: "number", placeholder: "0.7", step: "0.05" },
+        { key: "description_template", label: "Mẫu mô tả", type: "text", placeholder: "Chỉ làm {effective_hours}h / {required_hours}h → lương ×{penalty_rate}" },
+      ],
+    },
+    repeat_late_policy: {
+      label: "Phạt tái phạm đi trễ",
+      color: "text-red-600 bg-red-50 border-red-200",
+      fields: [
+        { key: "max_late_count", label: "Ngưỡng số lần trễ", type: "number", placeholder: "5", step: "1" },
+        { key: "penalty_type", label: "Loại phạt", type: "select", placeholder: "fixed" },
+        { key: "penalty_amount", label: "Số tiền phạt (VNĐ)", type: "number", placeholder: "200000", step: "10000" },
+        { key: "penalty_percentage", label: "Phần trăm phạt (VD: 0.05 = 5%)", type: "number", placeholder: "0", step: "0.01" },
+        { key: "description_template", label: "Mẫu mô tả", type: "text", placeholder: "Đi trễ {late_count} lần (>{max_late_count}) → phạt {penalty_amount}đ" },
+      ],
+    },
+  };
+
+  async function loadPayrollRules() {
+    try {
+      const res = await fetch(buildApiUrl("/api/salary/rules"), {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      if (res.ok) setPayrollRules(await res.json());
+    } catch (err) {
+      console.error("Load rules error:", err);
+    }
+  }
+
+  async function saveRule() {
+    if (!ruleForm.name || !ruleForm.rule_type) return;
+    try {
+      const url = editingRule
+        ? buildApiUrl(`/api/salary/rules/${encodeURIComponent(editingRule.id)}`)
+        : buildApiUrl("/api/salary/rules");
+      const method = editingRule ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ ...ruleForm, config: ruleForm.config, is_active: ruleForm.is_active ? 1 : 0 }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", "Lỗi", (err as { error?: string }).error || "Không thể lưu rule");
+        return;
+      }
+      showToast("success", "Thành công", editingRule ? "Đã cập nhật rule" : "Đã tạo rule");
+      setShowRuleForm(false);
+      setEditingRule(null);
+      await loadPayrollRules();
+    } catch { showToast("error", "Lỗi", "Không thể kết nối server"); }
+  }
+
+  async function toggleRule(rule: PayrollRule) {
+    try {
+      await fetch(buildApiUrl(`/api/salary/rules/${encodeURIComponent(rule.id)}`), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ is_active: rule.is_active ? 0 : 1 }),
+      });
+      await loadPayrollRules();
+    } catch { showToast("error", "Lỗi", "Không thể cập nhật"); }
+  }
+
+  async function deleteRule(ruleId: string) {
+    if (!confirm("Xóa rule này?")) return;
+    try {
+      await fetch(buildApiUrl(`/api/salary/rules/${encodeURIComponent(ruleId)}`), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      await loadPayrollRules();
+    } catch { showToast("error", "Lỗi", "Không thể xóa"); }
+  }
+
+  function openEditRule(rule: PayrollRule) {
+    setEditingRule(rule);
+    setRuleForm({
+      rule_type: rule.rule_type,
+      name: rule.name,
+      description: rule.description || "",
+      priority: rule.priority,
+      is_active: !!rule.is_active,
+      config: { ...rule.config },
+    });
+    setShowRuleForm(true);
+  }
+
+  function openAddRule() {
+    setEditingRule(null);
+    setRuleForm({
+      rule_type: "late_policy",
+      name: "",
+      description: "",
+      priority: 10,
+      is_active: true,
+      config: {},
+    });
+    setShowRuleForm(true);
+  }
+
+  // ============ Deduction Items ============
+  type DeductionItem = {
+    id: string;
+    name: string;
+    type: string;
+    calcType: string;
+    amount: number;
+    rate: number;
+    description: string;
+    priority: number;
+    isActive: number;
+  };
+
+  const [deductionItems, setDeductionItems] = useState<DeductionItem[]>([]);
+  const [editingDeduction, setEditingDeduction] = useState<DeductionItem | null>(null);
+  const [showDeductionForm, setShowDeductionForm] = useState(false);
+  const [deductionForm, setDeductionForm] = useState({
+    name: "",
+    type: "tax" as string,
+    calc_type: "percentage" as string,
+    amount: 0,
+    rate: 0,
+    description: "",
+    priority: 10,
+    is_active: true,
+  });
+
+  const DEDUCTION_TYPE_META: Record<string, { label: string; color: string }> = {
+    tax: { label: "Thuế", color: "text-red-600 bg-red-50 border-red-200" },
+    insurance: { label: "Bảo hiểm", color: "text-blue-600 bg-blue-50 border-blue-200" },
+    union_fee: { label: "Công đoàn", color: "text-purple-600 bg-purple-50 border-purple-200" },
+    custom: { label: "Tùy chỉnh", color: "text-gray-600 bg-gray-50 border-gray-200" },
+  };
+
+  async function loadDeductionItems() {
+    try {
+      const res = await fetch(buildApiUrl("/api/salary/deduction-items"), {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      if (res.ok) setDeductionItems(await res.json());
+    } catch (err) {
+      console.error("Load deduction items error:", err);
+    }
+  }
+
+  async function saveDeductionItem() {
+    if (!deductionForm.name) return;
+    try {
+      const url = editingDeduction
+        ? buildApiUrl(`/api/salary/deduction-items/${encodeURIComponent(editingDeduction.id)}`)
+        : buildApiUrl("/api/salary/deduction-items");
+      const method = editingDeduction ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({
+          ...deductionForm,
+          is_active: deductionForm.is_active ? 1 : 0,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", "Lỗi", (err as { error?: string }).error || "Không thể lưu");
+        return;
+      }
+      showToast("success", "Thành công", editingDeduction ? "Đã cập nhật" : "Đã tạo khoản khấu trừ");
+      setShowDeductionForm(false);
+      setEditingDeduction(null);
+      await loadDeductionItems();
+    } catch { showToast("error", "Lỗi", "Không thể kết nối server"); }
+  }
+
+  async function toggleDeductionItem(item: DeductionItem) {
+    try {
+      await fetch(buildApiUrl(`/api/salary/deduction-items/${encodeURIComponent(item.id)}`), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ is_active: item.isActive ? 0 : 1 }),
+      });
+      await loadDeductionItems();
+    } catch { showToast("error", "Lỗi", "Không thể cập nhật"); }
+  }
+
+  async function deleteDeductionItem(id: string) {
+    if (!confirm("Xóa khoản khấu trừ này?")) return;
+    try {
+      await fetch(buildApiUrl(`/api/salary/deduction-items/${encodeURIComponent(id)}`), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+      });
+      await loadDeductionItems();
+    } catch { showToast("error", "Lỗi", "Không thể xóa"); }
+  }
+
+  function openEditDeduction(item: DeductionItem) {
+    setEditingDeduction(item);
+    setDeductionForm({
+      name: item.name,
+      type: item.type,
+      calc_type: item.calcType,
+      amount: item.amount,
+      rate: item.rate,
+      description: item.description || "",
+      priority: item.priority,
+      is_active: !!item.isActive,
+    });
+    setShowDeductionForm(true);
+  }
+
+  function openAddDeduction() {
+    setEditingDeduction(null);
+    setDeductionForm({
+      name: "",
+      type: "tax",
+      calc_type: "percentage",
+      amount: 0,
+      rate: 0,
+      description: "",
+      priority: 10,
+      is_active: true,
+    });
+    setShowDeductionForm(true);
   }
 
   async function handleSaveCoefficient(type: string) {
@@ -1106,6 +1404,18 @@ export default function SalaryManagement() {
       requireElevated: true,
     },
     {
+      key: "rules",
+      label: "Ràng buộc",
+      icon: <Shield className="w-4 h-4" />,
+      requireElevated: true,
+    },
+    {
+      key: "deductions",
+      label: "Khấu trừ",
+      icon: <Calculator className="w-4 h-4" />,
+      requireElevated: true,
+    },
+    {
       key: "benefits",
       label: "Phụ cấp/BH",
       icon: <DollarSign className="w-4 h-4" />,
@@ -1462,6 +1772,11 @@ export default function SalaryManagement() {
                           </span>
                         </th>
                       )}
+                      {isColVisible("effective_hours") && (
+                        <th className="text-center px-3 py-3 font-semibold text-cyan-600 whitespace-nowrap">
+                          Giờ hiệu dụng
+                        </th>
+                      )}
                       {isColVisible("present_days") && (
                         <th
                           className="text-center px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
@@ -1496,6 +1811,11 @@ export default function SalaryManagement() {
                       {isColVisible("late_penalty") && (
                         <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
                           Phạt trễ
+                        </th>
+                      )}
+                      {isColVisible("rule_details") && (
+                        <th className="text-left px-3 py-3 font-semibold text-indigo-600 whitespace-nowrap">
+                          Ràng buộc
                         </th>
                       )}
                       {isColVisible("gross_salary") && (
@@ -1567,6 +1887,16 @@ export default function SalaryManagement() {
                             </span>
                           </td>
                         )}
+                        {isColVisible("effective_hours") && (
+                          <td className="px-3 py-3 text-center">
+                            <span className={`font-semibold ${r.effectiveHours != null && r.effectiveHours < (r.totalWorkingHours ?? 0) ? "text-orange-600" : "text-cyan-700"}`}>
+                              {r.effectiveHours != null ? `${r.effectiveHours.toFixed(1)}h` : "-"}
+                            </span>
+                            {r.lateHoursDeducted != null && r.lateHoursDeducted > 0 && (
+                              <div className="text-[10px] text-orange-500">-{r.lateHoursDeducted.toFixed(1)}h trễ</div>
+                            )}
+                          </td>
+                        )}
                         {isColVisible("present_days") && (
                           <td className="px-3 py-3 text-center">
                             <div>
@@ -1630,6 +1960,25 @@ export default function SalaryManagement() {
                             ) : (
                               <span className="text-gray-300">0đ</span>
                             )}
+                          </td>
+                        )}
+                        {isColVisible("rule_details") && (
+                          <td className="px-3 py-3 text-left max-w-[200px]">
+                            {(() => {
+                              const rd = r.ruleDetails;
+                              if (!rd) return <span className="text-gray-300 text-xs">—</span>;
+                              try {
+                                const details = typeof rd === "string" ? JSON.parse(rd) : rd;
+                                if (!Array.isArray(details) || details.length === 0) return <span className="text-gray-300 text-xs">—</span>;
+                                return (
+                                  <div className="space-y-0.5">
+                                    {(details as string[]).map((d, i) => (
+                                      <div key={i} className="text-[10px] text-indigo-600 leading-tight">{d}</div>
+                                    ))}
+                                  </div>
+                                );
+                              } catch { return <span className="text-gray-300 text-xs">—</span>; }
+                            })()}
                           </td>
                         )}
                         {isColVisible("gross_salary") && (
@@ -3027,6 +3376,440 @@ export default function SalaryManagement() {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================== Rules Tab =================== */}
+      {tab === "rules" && (isAdmin || isSalaryManager) && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Ràng buộc tính lương</h3>
+              <p className="text-sm text-gray-500">Cấu hình chính sách đi trễ, giờ tối thiểu, phạt tái phạm. Các rule sẽ tự động áp dụng khi tính lương.</p>
+            </div>
+            <button onClick={openAddRule} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">
+              <Plus className="w-4 h-4" /> Thêm Rule
+            </button>
+          </div>
+
+          {/* Rule cards */}
+          {payrollRules.length === 0 && (
+            <div className="text-center py-12 text-gray-400">
+              <Shield className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p>Chưa có rule nào. Nhấn &quot;Thêm Rule&quot; để tạo.</p>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {payrollRules.map((rule) => {
+              const meta = RULE_TYPE_META[rule.rule_type];
+              const cfg = rule.config || {};
+              return (
+                <div key={rule.id} className={`border rounded-xl p-4 ${rule.is_active ? "bg-white border-gray-200" : "bg-gray-50 border-gray-100 opacity-60"}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${meta?.color || "text-gray-600 bg-gray-50 border-gray-200"}`}>
+                          {meta?.label || rule.rule_type}
+                        </span>
+                        <span className="text-sm font-bold text-gray-800">{rule.name}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${rule.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                          {rule.is_active ? "BẬT" : "TẮT"}
+                        </span>
+                      </div>
+                      {rule.description && <p className="text-xs text-gray-500 mb-2">{rule.description}</p>}
+
+                      {/* Config summary */}
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                        {rule.rule_type === "late_policy" && (
+                          <>
+                            <span>Ân hạn: <strong>{String(cfg.grace_minutes ?? 0)} phút</strong></span>
+                            <span>Quy đổi: <strong>×{String(cfg.conversion_rate ?? 1)}</strong></span>
+                          </>
+                        )}
+                        {rule.rule_type === "min_hours_policy" && (
+                          <>
+                            <span>Giờ tối thiểu: <strong>{String(cfg.required_hours ?? 160)}h</strong></span>
+                            <span>Hệ số phạt: <strong>×{String(cfg.penalty_rate ?? 0.7)}</strong> (giảm {Math.round((1 - Number(cfg.penalty_rate ?? 0.7)) * 100)}%)</span>
+                          </>
+                        )}
+                        {rule.rule_type === "repeat_late_policy" && (
+                          <>
+                            <span>Ngưỡng: <strong>{String(cfg.max_late_count ?? 5)} lần</strong></span>
+                            <span>Phạt: <strong>{cfg.penalty_type === "percentage" ? `${(Number(cfg.penalty_percentage ?? 0) * 100).toFixed(0)}%` : `${Number(cfg.penalty_amount ?? 0).toLocaleString("vi-VN")}đ`}</strong></span>
+                          </>
+                        )}
+                        <span className="text-gray-400">Ưu tiên: {rule.priority}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button onClick={() => toggleRule(rule)} className={`px-2.5 py-1 text-xs rounded-lg border ${rule.is_active ? "border-orange-200 text-orange-600 hover:bg-orange-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}>
+                        {rule.is_active ? "Tắt" : "Bật"}
+                      </button>
+                      <button onClick={() => openEditRule(rule)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50">
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => deleteRule(rule.id)} className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Rule form modal */}
+          {showRuleForm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+                <div className="sticky top-0 bg-white border-b px-6 py-4 rounded-t-2xl flex items-center justify-between">
+                  <h3 className="text-lg font-bold">{editingRule ? "Sửa Rule" : "Thêm Rule mới"}</h3>
+                  <button onClick={() => setShowRuleForm(false)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-6 space-y-4">
+                  {/* Rule type */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Loại rule</label>
+                    <select
+                      value={ruleForm.rule_type}
+                      onChange={(e) => setRuleForm({ ...ruleForm, rule_type: e.target.value, config: {} })}
+                      disabled={!!editingRule}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                      {Object.entries(RULE_TYPE_META).map(([k, v]) => (
+                        <option key={k} value={k}>{v.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Name */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Tên rule *</label>
+                    <input
+                      type="text" value={ruleForm.name}
+                      onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })}
+                      placeholder="VD: Chính sách đi trễ công ty"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+
+                  {/* Description */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Mô tả</label>
+                    <textarea
+                      value={ruleForm.description}
+                      onChange={(e) => setRuleForm({ ...ruleForm, description: e.target.value })}
+                      rows={2}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+
+                  {/* Priority + Active */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Ưu tiên (nhỏ = chạy trước)</label>
+                      <input type="number" value={ruleForm.priority}
+                        onChange={(e) => setRuleForm({ ...ruleForm, priority: parseInt(e.target.value) || 0 })}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                    <div className="flex items-end pb-1">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={ruleForm.is_active}
+                          onChange={(e) => setRuleForm({ ...ruleForm, is_active: e.target.checked })}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-gray-700">Kích hoạt</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Dynamic config fields */}
+                  <div className="border-t pt-4">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3">Cấu hình</h4>
+                    <div className="space-y-3">
+                      {(RULE_TYPE_META[ruleForm.rule_type]?.fields || []).map((field) => (
+                        <div key={field.key}>
+                          <label className="text-xs font-medium text-gray-600 mb-1 block">{field.label}</label>
+                          {field.type === "select" && field.key === "penalty_type" ? (
+                            <select
+                              value={String(ruleForm.config[field.key] || "fixed")}
+                              onChange={(e) => setRuleForm({ ...ruleForm, config: { ...ruleForm.config, [field.key]: e.target.value } })}
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            >
+                              <option value="fixed">Cố định (VNĐ)</option>
+                              <option value="percentage">Phần trăm (%)</option>
+                            </select>
+                          ) : (
+                            <input
+                              type={field.type}
+                              step={field.step}
+                              value={String(ruleForm.config[field.key] ?? "")}
+                              onChange={(e) => {
+                                const val = field.type === "number" ? (e.target.value === "" ? "" : parseFloat(e.target.value)) : e.target.value;
+                                setRuleForm({ ...ruleForm, config: { ...ruleForm.config, [field.key]: val } });
+                              }}
+                              placeholder={field.placeholder}
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Explanation */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600">
+                    {ruleForm.rule_type === "late_policy" && (
+                      <div>
+                        <strong>Cách hoạt động:</strong> Mỗi ngày đi trễ, trừ đi ân hạn ({String(ruleForm.config.grace_minutes || 0)} phút),
+                        phần còn lại quy đổi thành giờ bị trừ (×{String(ruleForm.config.conversion_rate || 1)}).
+                        <br /><br />
+                        <strong>VD:</strong> Trễ 35 phút, ân hạn 5 phút → (35-5)/60 × {String(ruleForm.config.conversion_rate || 1)} = {((Math.max(0, 35 - Number(ruleForm.config.grace_minutes || 0)) / 60) * Number(ruleForm.config.conversion_rate || 1)).toFixed(2)}h bị trừ
+                      </div>
+                    )}
+                    {ruleForm.rule_type === "min_hours_policy" && (
+                      <div>
+                        <strong>Cách hoạt động:</strong> Nếu giờ làm hiệu dụng &lt; {String(ruleForm.config.required_hours || 160)}h,
+                        lương sẽ nhân hệ số {String(ruleForm.config.penalty_rate || 0.7)} (giảm {Math.round((1 - Number(ruleForm.config.penalty_rate || 0.7)) * 100)}%).
+                        <br /><br />
+                        <strong>VD:</strong> Lương gross 10M, chỉ làm 120h/{String(ruleForm.config.required_hours || 160)}h → lương = 10M × {String(ruleForm.config.penalty_rate || 0.7)} = {(10000000 * Number(ruleForm.config.penalty_rate || 0.7)).toLocaleString("vi-VN")}đ
+                      </div>
+                    )}
+                    {ruleForm.rule_type === "repeat_late_policy" && (
+                      <div>
+                        <strong>Cách hoạt động:</strong> Nếu đi trễ &gt; {String(ruleForm.config.max_late_count || 5)} lần/tháng,
+                        phạt thêm {ruleForm.config.penalty_type === "percentage" ? `${(Number(ruleForm.config.penalty_percentage || 0) * 100).toFixed(0)}% lương` : `${Number(ruleForm.config.penalty_amount || 0).toLocaleString("vi-VN")}đ`}.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={saveRule} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium">
+                      <Save className="w-4 h-4 inline mr-1" /> {editingRule ? "Cập nhật" : "Tạo Rule"}
+                    </button>
+                    <button onClick={() => setShowRuleForm(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+                      Hủy
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Info box */}
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
+            <strong>💡 Luồng tính lương khi có rule:</strong>
+            <ol className="mt-2 space-y-1 list-decimal list-inside">
+              <li>Lấy giờ làm thực tế (working_hours)</li>
+              <li><strong>Áp dụng late_policy</strong> → ra giờ hiệu dụng (effective_hours = working_hours - late_deduction)</li>
+              <li>Tính lương cơ bản từ effective_hours (thay vì working_hours)</li>
+              <li><strong>Áp dụng min_hours_policy</strong> → giảm lương nếu dưới ngưỡng</li>
+              <li><strong>Áp dụng repeat_late_policy</strong> → phạt thêm nếu trễ nhiều lần</li>
+              <li>Trừ khấu trừ, phạt vi phạm → ra net salary</li>
+            </ol>
+          </div>
+        </div>
+      )}
+
+      {/* =================== Deductions Tab =================== */}
+      {tab === "deductions" && (isAdmin || isSalaryManager) && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Khoản khấu trừ</h3>
+              <p className="text-sm text-gray-500">Cấu hình thuế, BHXH, BHYT, phí công đoàn và các khoản trừ tự động áp dụng khi tính lương. Các khoản này <strong>không ảnh hưởng lương trước thuế (gross)</strong>.</p>
+            </div>
+            <button onClick={openAddDeduction} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium">
+              <Plus className="w-4 h-4" /> Thêm khoản trừ
+            </button>
+          </div>
+
+          {/* Deduction cards */}
+          {deductionItems.length === 0 && (
+            <div className="text-center py-12 text-gray-400">
+              <Calculator className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p>Chưa có khoản khấu trừ nào. Nhấn &quot;Thêm khoản trừ&quot; để tạo.</p>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {deductionItems.map((item) => {
+              const meta = DEDUCTION_TYPE_META[item.type] || DEDUCTION_TYPE_META.custom;
+              return (
+                <div key={item.id} className={`border rounded-xl p-4 ${item.isActive ? "bg-white border-gray-200" : "bg-gray-50 border-gray-100 opacity-60"}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${meta.color}`}>
+                          {meta.label}
+                        </span>
+                        <span className="text-sm font-bold text-gray-800">{item.name}</span>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${item.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                          {item.isActive ? "BẬT" : "TẮT"}
+                        </span>
+                      </div>
+                      {item.description && <p className="text-xs text-gray-500 mb-2">{item.description}</p>}
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                        <span>Cách tính: <strong>{item.calcType === "percentage" ? "Phần trăm" : "Cố định"}</strong></span>
+                        {item.calcType === "percentage" ? (
+                          <span>Tỷ lệ: <strong>{(item.rate * 100).toFixed(1)}%</strong> lương gross</span>
+                        ) : (
+                          <span>Số tiền: <strong>{item.amount.toLocaleString("vi-VN")}đ</strong></span>
+                        )}
+                        <span className="text-gray-400">Ưu tiên: {item.priority}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button onClick={() => toggleDeductionItem(item)} className={`px-2.5 py-1 text-xs rounded-lg border ${item.isActive ? "border-orange-200 text-orange-600 hover:bg-orange-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}>
+                        {item.isActive ? "Tắt" : "Bật"}
+                      </button>
+                      <button onClick={() => openEditDeduction(item)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50">
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => deleteDeductionItem(item.id)} className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Deduction form modal */}
+          {showDeductionForm && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+                <div className="sticky top-0 bg-white border-b px-6 py-4 rounded-t-2xl flex items-center justify-between">
+                  <h3 className="text-lg font-bold">{editingDeduction ? "Sửa khoản trừ" : "Thêm khoản trừ mới"}</h3>
+                  <button onClick={() => setShowDeductionForm(false)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="p-6 space-y-4">
+                  {/* Name */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Tên khoản trừ *</label>
+                    <input type="text" value={deductionForm.name}
+                      onChange={(e) => setDeductionForm({ ...deductionForm, name: e.target.value })}
+                      placeholder="VD: BHXH (8%)"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+
+                  {/* Type */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Loại</label>
+                    <select value={deductionForm.type}
+                      onChange={(e) => setDeductionForm({ ...deductionForm, type: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                      {Object.entries(DEDUCTION_TYPE_META).map(([k, v]) => (
+                        <option key={k} value={k}>{v.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Calc type */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Cách tính</label>
+                    <select value={deductionForm.calc_type}
+                      onChange={(e) => setDeductionForm({ ...deductionForm, calc_type: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    >
+                      <option value="percentage">Phần trăm lương gross (%)</option>
+                      <option value="fixed">Cố định (VNĐ)</option>
+                    </select>
+                  </div>
+
+                  {/* Amount or Rate */}
+                  {deductionForm.calc_type === "percentage" ? (
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Tỷ lệ (VD: 0.08 = 8%)</label>
+                      <input type="number" step="0.001" value={deductionForm.rate}
+                        onChange={(e) => setDeductionForm({ ...deductionForm, rate: parseFloat(e.target.value) || 0 })}
+                        placeholder="0.08"
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">= {(deductionForm.rate * 100).toFixed(1)}% lương gross</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Số tiền (VNĐ)</label>
+                      <input type="number" step="10000" value={deductionForm.amount}
+                        onChange={(e) => setDeductionForm({ ...deductionForm, amount: parseFloat(e.target.value) || 0 })}
+                        placeholder="500000"
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                  )}
+
+                  {/* Description */}
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Mô tả</label>
+                    <textarea value={deductionForm.description}
+                      onChange={(e) => setDeductionForm({ ...deductionForm, description: e.target.value })}
+                      rows={2}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+
+                  {/* Priority + Active */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Ưu tiên (nhỏ = trước)</label>
+                      <input type="number" value={deductionForm.priority}
+                        onChange={(e) => setDeductionForm({ ...deductionForm, priority: parseInt(e.target.value) || 0 })}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                      />
+                    </div>
+                    <div className="flex items-end pb-1">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={deductionForm.is_active}
+                          onChange={(e) => setDeductionForm({ ...deductionForm, is_active: e.target.checked })}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-gray-700">Kích hoạt</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Preview */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600">
+                    <strong>Xem trước:</strong> Với lương gross 10,000,000đ →{" "}
+                    {deductionForm.calc_type === "percentage"
+                      ? `trừ ${(10000000 * deductionForm.rate).toLocaleString("vi-VN")}đ (${(deductionForm.rate * 100).toFixed(1)}%)`
+                      : `trừ ${deductionForm.amount.toLocaleString("vi-VN")}đ (cố định)`}
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={saveDeductionItem} className="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium">
+                      <Save className="w-4 h-4 inline mr-1" /> {editingDeduction ? "Cập nhật" : "Tạo"}
+                    </button>
+                    <button onClick={() => setShowDeductionForm(false)} className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">
+                      Hủy
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Info box */}
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
+            <strong>Cách hoạt động:</strong>
+            <ul className="mt-2 space-y-1 list-disc list-inside">
+              <li>Các khoản khấu trừ nằm ở <strong>Phase 3 (Deductions)</strong> của Salary Engine</li>
+              <li>Chúng <strong>KHÔNG làm thay đổi lương trước thuế (gross)</strong></li>
+              <li>Công thức: <strong>Net = Gross - Thuế - BHXH - BHYT - Phạt - ...</strong></li>
+              <li>Khoản trừ % sẽ tính trên gross đã qua rule adjustment (sau min_hours_policy)</li>
+            </ul>
           </div>
         </div>
       )}

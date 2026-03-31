@@ -215,6 +215,11 @@ export const salaryApi = {
     return request<{ month: string; data: Record<string, unknown>[]; total: number; page: number; totalPages: number; departments?: string[] }>('GET', '/salary/attendance-scores', undefined, q);
   },
   adjustOt: (id: string, data: Record<string, unknown>) => request<Record<string, unknown>>('PUT', `/salary/records/${encodeURIComponent(id)}/adjust-ot`, data),
+  // Deduction items
+  getDeductionItems: () => request<Record<string, unknown>[]>('GET', '/salary/deduction-items'),
+  createDeductionItem: (data: Record<string, unknown>) => request<Record<string, unknown>>('POST', '/salary/deduction-items', data),
+  updateDeductionItem: (id: string, data: Record<string, unknown>) => request<Record<string, unknown>>('PUT', `/salary/deduction-items/${encodeURIComponent(id)}`, data),
+  deleteDeductionItem: (id: string) => request<void>('DELETE', `/salary/deduction-items/${encodeURIComponent(id)}`),
 };
 
 // ============ Holidays ============

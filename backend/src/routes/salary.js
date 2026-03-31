@@ -3,6 +3,157 @@ const pool = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 const { authenticate, adminOnly, requireSalaryRole, adminOrSalaryRole } = require('../middleware/auth');
 const { toCamelCase, toCamelCaseArray, logAudit } = require('../helpers');
+const { applyRules } = require('../services/salaryRuleEngine');
+const { calculateSalary: engineCalculateSalary } = require('../services/salaryEngine');
+
+// ========== PAYROLL RULES ==========
+
+// GET /api/salary/rules — list all payroll rules
+router.get('/rules', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM payroll_rules ORDER BY priority ASC, created_at ASC');
+    const parsed = rows.map(r => ({
+      ...r,
+      config: typeof r.config === 'string' ? JSON.parse(r.config) : r.config,
+    }));
+    res.json(parsed);
+  } catch (err) {
+    console.error('Get payroll rules error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// POST /api/salary/rules — create a new rule
+router.post('/rules', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { rule_type, name, description, config, priority, is_active } = req.body;
+    if (!rule_type || !name || !config) {
+      return res.status(400).json({ error: 'Thiếu rule_type, name, hoặc config' });
+    }
+    const allowedTypes = ['late_policy', 'min_hours_policy', 'repeat_late_policy'];
+    if (!allowedTypes.includes(rule_type)) {
+      return res.status(400).json({ error: `rule_type phải là: ${allowedTypes.join(', ')}` });
+    }
+    const id = 'rule_' + uuidv4().slice(0, 8);
+    const configStr = typeof config === 'string' ? config : JSON.stringify(config);
+    await pool.execute(
+      `INSERT INTO payroll_rules (id, rule_type, name, description, config, priority, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, rule_type, name, description || '', configStr, priority ?? 0, is_active ?? 1, req.user.id]
+    );
+    res.json({ id, message: 'Đã tạo rule' });
+  } catch (err) {
+    console.error('Create payroll rule error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/rules/:id — update a rule
+router.put('/rules/:id', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { name, description, config, priority, is_active } = req.body;
+    const sets = [];
+    const params = [];
+    if (name !== undefined) { sets.push('name = ?'); params.push(name); }
+    if (description !== undefined) { sets.push('description = ?'); params.push(description); }
+    if (config !== undefined) {
+      const configStr = typeof config === 'string' ? config : JSON.stringify(config);
+      sets.push('config = ?');
+      params.push(configStr);
+    }
+    if (priority !== undefined) { sets.push('priority = ?'); params.push(priority); }
+    if (is_active !== undefined) { sets.push('is_active = ?'); params.push(is_active ? 1 : 0); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Không có gì để cập nhật' });
+    params.push(req.params.id);
+    await pool.execute(`UPDATE payroll_rules SET ${sets.join(', ')} WHERE id = ?`, params);
+    res.json({ message: 'Đã cập nhật rule' });
+  } catch (err) {
+    console.error('Update payroll rule error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// DELETE /api/salary/rules/:id — delete a rule
+router.delete('/rules/:id', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    await pool.execute('DELETE FROM payroll_rules WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Đã xóa rule' });
+  } catch (err) {
+    console.error('Delete payroll rule error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// ========== DEDUCTION ITEMS ==========
+
+// GET /api/salary/deduction-items — list all deduction items
+router.get('/deduction-items', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM salary_deduction_items ORDER BY priority ASC, created_at ASC');
+    res.json(toCamelCaseArray(rows));
+  } catch (err) {
+    console.error('Get deduction items error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// POST /api/salary/deduction-items — create deduction item
+router.post('/deduction-items', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { name, type, calc_type, amount, rate, description, priority, is_active } = req.body;
+    if (!name || !type || !calc_type) return res.status(400).json({ error: 'Thiếu thông tin bắt buộc' });
+
+    const allowedTypes = ['tax', 'insurance', 'union_fee', 'custom'];
+    if (!allowedTypes.includes(type)) return res.status(400).json({ error: 'Loại không hợp lệ' });
+    if (!['fixed', 'percentage'].includes(calc_type)) return res.status(400).json({ error: 'Cách tính không hợp lệ' });
+
+    const id = 'ded_' + uuidv4().slice(0, 8);
+    await pool.execute(
+      `INSERT INTO salary_deduction_items (id, name, type, calc_type, amount, rate, description, priority, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, name, type, calc_type, parseFloat(amount) || 0, parseFloat(rate) || 0, description || '', priority ?? 0, is_active ?? 1, req.user.id]
+    );
+    res.json({ id, message: 'Đã tạo khoản khấu trừ' });
+  } catch (err) {
+    console.error('Create deduction item error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/deduction-items/:id — update deduction item
+router.put('/deduction-items/:id', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { name, type, calc_type, amount, rate, description, priority, is_active } = req.body;
+    const sets = [];
+    const params = [];
+    if (name !== undefined) { sets.push('name = ?'); params.push(name); }
+    if (type !== undefined) { sets.push('type = ?'); params.push(type); }
+    if (calc_type !== undefined) { sets.push('calc_type = ?'); params.push(calc_type); }
+    if (amount !== undefined) { sets.push('amount = ?'); params.push(parseFloat(amount) || 0); }
+    if (rate !== undefined) { sets.push('rate = ?'); params.push(parseFloat(rate) || 0); }
+    if (description !== undefined) { sets.push('description = ?'); params.push(description); }
+    if (priority !== undefined) { sets.push('priority = ?'); params.push(priority); }
+    if (is_active !== undefined) { sets.push('is_active = ?'); params.push(is_active ? 1 : 0); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Không có gì để cập nhật' });
+    params.push(req.params.id);
+    await pool.execute(`UPDATE salary_deduction_items SET ${sets.join(', ')} WHERE id = ?`, params);
+    res.json({ message: 'Đã cập nhật' });
+  } catch (err) {
+    console.error('Update deduction item error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// DELETE /api/salary/deduction-items/:id — delete deduction item
+router.delete('/deduction-items/:id', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    await pool.execute('DELETE FROM salary_deduction_items WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Đã xóa' });
+  } catch (err) {
+    console.error('Delete deduction item error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
 
 // ========== FORMULA VARIABLES ==========
 
@@ -503,6 +654,46 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
     const penMap = new Map();
     for (const p of allPenalties) penMap.set(p.employee_id, parseFloat(p.total));
 
+    // Load payroll rules (sorted by priority)
+    const [payrollRules] = await pool.query(
+      'SELECT * FROM payroll_rules WHERE is_active = 1 ORDER BY priority ASC'
+    );
+    const parsedRules = payrollRules.map(r => ({
+      ...r,
+      config: typeof r.config === 'string' ? JSON.parse(r.config) : r.config,
+    }));
+
+    // Load active deduction items (tax, insurance, etc.)
+    const [deductItemRows] = await pool.query(
+      'SELECT * FROM salary_deduction_items WHERE is_active = 1 ORDER BY priority ASC'
+    );
+    const activeDeductionItems = deductItemRows.map(item => ({
+      type: item.type,
+      label: item.name,
+      calc_type: item.calc_type,
+      amount: parseFloat(item.amount) || 0,
+      rate: parseFloat(item.rate) || 0,
+    }));
+
+    // Load per-employee late minutes for the month (for rule engine)
+    const [lateData] = await pool.query(
+      `SELECT employee_id,
+              COUNT(CASE WHEN status = 'late' THEN 1 END) AS late_count,
+              COALESCE(SUM(late_minutes), 0) AS total_late_minutes,
+              GROUP_CONCAT(CASE WHEN status = 'late' THEN late_minutes ELSE NULL END) AS daily_late_csv
+       FROM attendance_records
+       WHERE DATE_FORMAT(date, '%Y-%m') = ?
+       GROUP BY employee_id`, [month]
+    );
+    const lateMap = new Map();
+    for (const ld of lateData) {
+      lateMap.set(ld.employee_id, {
+        lateCount: parseInt(ld.late_count || 0),
+        totalLateMinutes: parseInt(ld.total_late_minutes || 0),
+        dailyLateMinutes: ld.daily_late_csv ? ld.daily_late_csv.split(',').map(Number).filter(n => n > 0) : [],
+      });
+    }
+
     // Function to parse salary config from custom_formula JSON
     function parseConfig(cfStr) {
       try {
@@ -692,9 +883,22 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
 
       let grossSalary, netSalary, otPay, allowancePay, latePenalty, deductionsPay;
 
-      const formulaVars = {
+      // ─── Apply Rule Engine ─────────────────────────────────────
+      const empLate = lateMap.get(emp.emp_id) || { lateCount: 0, totalLateMinutes: 0, dailyLateMinutes: [] };
+      const ruleInput = {
         working_hours: actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay),
-        present_days: presentDays,
+        total_late_minutes: empLate.totalLateMinutes,
+        late_count: empLate.lateCount,
+        daily_late_minutes: empLate.dailyLateMinutes,
+      };
+      const { adjustedData, appliedRules } = applyRules(ruleInput, parsedRules);
+      const effectiveHours = adjustedData.effective_hours ?? ruleInput.working_hours;
+      const effectivePresentDays = parseFloat((effectiveHours / 8).toFixed(2));
+      // ──────────────────────────────────────────────────────────
+
+      const formulaVars = {
+        working_hours: effectiveHours,
+        present_days: effectivePresentDays,
         hourly_rate: hourlyRate,
         daily_rate: dailyRate,
         base_salary: baseSalary,
@@ -704,6 +908,12 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
         late_days: lateDays,
         late_penalty_rate: config.latePenaltyPerDay,
         deductions: rawDeductions,
+        // Rule engine outputs available as formula variables
+        effective_hours: effectiveHours,
+        raw_working_hours: actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay),
+        late_hours_deducted: adjustedData.late_hours_deducted || 0,
+        late_count: empLate.lateCount,
+        total_late_minutes: empLate.totalLateMinutes,
       };
 
       // Merge custom variables: DB-level first, then per-preset overrides
@@ -716,53 +926,24 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
         }
       }
 
-      if (config.customExpression) {
-        // Custom text expression mode (supports operator precedence + parentheses)
-        grossSalary = evaluateExpression(config.customExpression, formulaVars);
-        const expr = config.customExpression;
-        const hasOT = /ot_hours/.test(expr);
-        const hasAllowances = /allowances/.test(expr);
-        const hasLatePenalty = /late_days|late_penalty_rate/.test(expr);
-        const hasDeductions = /deductions/.test(expr);
-        otPay = hasOT ? 0 : (config.includeOT ? (totalOtHours * hourlyRate * config.otMultiplier) : 0);
-        allowancePay = hasAllowances ? 0 : (config.includeAllowances ? allowances : 0);
-        latePenalty = hasLatePenalty ? 0 : (config.includeLatePenalty ? (lateDays * config.latePenaltyPerDay) : 0);
-        deductionsPay = hasDeductions ? 0 : (config.includeDeductions ? rawDeductions : 0);
-        grossSalary = grossSalary + otPay + allowancePay;
-        netSalary = grossSalary - deductionsPay - latePenalty;
-      } else if (config.formulaNodes && config.formulaNodes.length > 0) {
-        // Drag-drop formula mode: evaluate with proper operator precedence
-        grossSalary = evaluateFormula(config.formulaNodes, formulaVars);
-        // Don't double-count components already inside the formula
-        const hasOT = config.formulaNodes.some(n => n.blockId === 'ot_hours');
-        const hasAllowances = config.formulaNodes.some(n => n.blockId === 'allowances');
-        const hasLatePenalty = config.formulaNodes.some(n => n.blockId === 'late_days' || n.blockId === 'late_penalty_rate');
-        const hasDeductions = config.formulaNodes.some(n => n.blockId === 'deductions');
-        otPay = hasOT ? 0 : (config.includeOT ? (totalOtHours * hourlyRate * config.otMultiplier) : 0);
-        allowancePay = hasAllowances ? 0 : (config.includeAllowances ? allowances : 0);
-        latePenalty = hasLatePenalty ? 0 : (config.includeLatePenalty ? (lateDays * config.latePenaltyPerDay) : 0);
-        deductionsPay = hasDeductions ? 0 : (config.includeDeductions ? rawDeductions : 0);
-        grossSalary = grossSalary + otPay + allowancePay;
-        netSalary = grossSalary - deductionsPay - latePenalty;
-      } else {
-        // Legacy salaryBasis mode
-        let basePay;
-        if (config.salaryBasis === 'daily') {
-          basePay = presentDays * dailyRate;
-        } else if (config.salaryBasis === 'fixed') {
-          basePay = baseSalary;
-        } else {
-          const workedHours = actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay);
-          basePay = workedHours * hourlyRate;
-        }
-        const otMultiplier = coeffMap.get('overtime') || config.otMultiplier;
-        otPay = config.includeOT ? (totalOtHours * hourlyRate * otMultiplier) : 0;
-        allowancePay = config.includeAllowances ? allowances : 0;
-        deductionsPay = config.includeDeductions ? rawDeductions : 0;
-        latePenalty = config.includeLatePenalty ? (lateDays * config.latePenaltyPerDay) : 0;
-        grossSalary = basePay + otPay + allowancePay;
-        netSalary = grossSalary - deductionsPay - latePenalty;
-      }
+      // ─── Salary Engine: 4-phase calculation ───
+      const engineResult = engineCalculateSalary({
+        config, baseSalary, allowances,
+        actualWorkedHours, presentDays: effectivePresentDays, totalOtHours, lateDays, standardHoursPerDay,
+        adjustedData, appliedRules, effectiveHours,
+        rawDeductions,
+        deductionItems: activeDeductionItems,
+        evaluateExpression, evaluateFormula, formulaVars, coeffMap,
+      });
+
+      grossSalary = engineResult.grossSalary;
+      netSalary = engineResult.netSalary;
+      otPay = engineResult.otPay;
+      allowancePay = engineResult.allowancePay;
+      latePenalty = engineResult.latePenalty;
+      deductionsPay = engineResult.deductionsPay;
+      const ruleDeductions = engineResult.ruleDeductions;
+      const allRuleDescs = engineResult.ruleDescriptions;
 
       const insurance = 0;
       const healthInsurance = 0;
@@ -773,9 +954,16 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
         baseSalary, totalWorkDays, parseFloat(presentDays.toFixed(2)), totalOtHours,
         Math.round(otPay), allowances, JSON.stringify({}),
         insurance, healthInsurance,
-        Math.round(deductionsPay), JSON.stringify({}),
+        Math.round(engineResult.totalDeductions), JSON.stringify(engineResult.deductionItems || []),
         dedication, Math.round(latePenalty),
-        Math.round(grossSalary), Math.round(netSalary)
+        Math.round(grossSalary), Math.round(netSalary),
+        // New rule engine columns
+        parseFloat(effectiveHours.toFixed(2)),
+        parseFloat((adjustedData.late_hours_deducted || 0).toFixed(2)),
+        empLate.totalLateMinutes,
+        empLate.lateCount,
+        adjustedData.min_hours_penalty_rate ?? null,
+        allRuleDescs.length > 0 ? JSON.stringify(allRuleDescs) : null
       ]);
       count++;
     }
@@ -783,13 +971,14 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
     // Batch insert
     for (let i = 0; i < insertValues.length; i += 500) {
       const chunk = insertValues.slice(i, i + 500);
-      const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
+      const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
       const flatValues = chunk.flat();
       await pool.query(
         `INSERT INTO salary_records (id, employee_id, employee_name, month, preset_id, preset_name,
           base_salary, total_work_days, present_days, ot_hours, ot_pay, allowances, allowances_detail,
           insurance, health_insurance, deductions, deductions_detail, dedication, late_penalty,
-          gross_salary, net_salary) VALUES ${placeholders}`,
+          gross_salary, net_salary,
+          effective_hours, late_hours_deducted, total_late_minutes, late_count, min_hours_penalty_rate, rule_details) VALUES ${placeholders}`,
         flatValues
       );
     }

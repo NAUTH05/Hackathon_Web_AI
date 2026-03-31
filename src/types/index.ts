@@ -312,4 +312,11 @@ export interface SalaryRecord {
   grossSalary: number;
   netSalary: number;
   calculatedAt: string;
+  // Rule engine fields
+  effectiveHours?: number;
+  lateHoursDeducted?: number;
+  totalLateMinutes?: number;
+  lateCount?: number;
+  minHoursPenaltyRate?: number;
+  ruleDetails?: string;
 }
