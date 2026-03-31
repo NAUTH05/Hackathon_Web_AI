@@ -270,6 +270,14 @@ export async function deletePenalty(id: string): Promise<void> {
   await penaltiesApi.delete(id);
 }
 
+export async function resolveAllPenalties(filters?: { status?: string; type?: string }): Promise<{ updated: number }> {
+  return penaltiesApi.resolveAll(filters);
+}
+
+export async function cleanupPenalties(days: number): Promise<{ deleted: number; days: number }> {
+  return penaltiesApi.cleanup(days);
+}
+
 // ========== Shift Swaps ==========
 export async function getShiftSwaps(): Promise<ShiftSwapRequest[]> {
   return cast<ShiftSwapRequest>(await shiftSwapsApi.list());
@@ -512,6 +520,10 @@ export async function updateSalaryCoefficient(id: string, data: Record<string, u
   return castOne<SalaryCoefficient>(await salaryApi.updateCoefficient(id, data));
 }
 
+export async function deleteSalaryCoefficient(type: string): Promise<void> {
+  await salaryApi.deleteCoefficient(type);
+}
+
 // ========== Salary Permissions ==========
 export interface SalaryPermission {
   userId: string;
@@ -536,6 +548,14 @@ export async function revokeSalaryPermission(userId: string): Promise<void> {
 
 export async function searchUsersForRole(q: string) {
   return await salaryApi.searchUsers(q);
+}
+
+export async function getAttendanceScores(params: { month: string; page?: number; limit?: number; search?: string; dept?: string; rank?: string; sortBy?: string; sortDir?: string }) {
+  return await salaryApi.getAttendanceScores(params);
+}
+
+export async function adjustSalaryOt(id: string, data: Record<string, unknown>) {
+  return await salaryApi.adjustOt(id, data);
 }
 
 // ========== Export Templates ==========

@@ -303,6 +303,7 @@ export interface SalaryRecord {
   baseSalary: number;
   totalWorkDays: number;
   presentDays: number;
+  totalWorkingHours?: number;
   otHours: number;
   otPay: number;
   allowances: number;

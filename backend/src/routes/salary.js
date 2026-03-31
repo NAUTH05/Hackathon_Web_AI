@@ -190,11 +190,17 @@ router.delete('/permissions/:userId', authenticate, adminOnly, async (req, res) 
 
 // ========== COEFFICIENTS ==========
 
-// GET /api/salary/coefficients
+// GET /api/salary/coefficients — returns one row per type (deduped)
 router.get('/coefficients', authenticate, async (req, res) => {
   try {
+    // Return only the latest row per type to avoid UI duplicates from bad seed data
     const [rows] = await pool.execute(
-      'SELECT * FROM salary_coefficients WHERE is_active = 1 ORDER BY type'
+      `SELECT sc.*
+       FROM salary_coefficients sc
+       INNER JOIN (
+         SELECT type, MAX(id) AS max_id FROM salary_coefficients WHERE is_active = 1 GROUP BY type
+       ) latest ON sc.id = latest.max_id
+       ORDER BY FIELD(sc.type,'overtime','night_shift','weekend','holiday','dedication')`
     );
     res.json(toCamelCaseArray(rows));
   } catch (err) {
@@ -203,38 +209,37 @@ router.get('/coefficients', authenticate, async (req, res) => {
   }
 });
 
-// PUT /api/salary/coefficients/:type
+// PUT /api/salary/coefficients/:type — upsert one canonical row per type
 router.put('/coefficients/:type', authenticate, requireSalaryRole, async (req, res) => {
   try {
     const { multiplier, description } = req.body;
     const type = req.params.type;
+    if (!multiplier || isNaN(parseFloat(multiplier))) return res.status(400).json({ error: 'Hệ số không hợp lệ' });
 
-    // Check if exists
-    const [existing] = await pool.execute(
-      'SELECT * FROM salary_coefficients WHERE type = ?', [type]
+    // Dedup: delete all rows of this type, then insert one fresh row
+    await pool.execute('DELETE FROM salary_coefficients WHERE type = ?', [type]);
+    const id = uuidv4();
+    await pool.execute(
+      `INSERT INTO salary_coefficients (id, type, multiplier, description, is_active)
+       VALUES (?, ?, ?, ?, 1)`,
+      [id, type, parseFloat(multiplier), description || null]
     );
-
-    if (existing.length === 0) {
-      // Create new
-      const id = uuidv4();
-      await pool.execute(
-        `INSERT INTO salary_coefficients (id, type, multiplier, description)
-         VALUES (?, ?, ?, ?)`,
-        [id, type, multiplier, description || null]
-      );
-      const [rows] = await pool.execute('SELECT * FROM salary_coefficients WHERE id = ?', [id]);
-      res.status(201).json(toCamelCase(rows[0]));
-    } else {
-      // Update existing
-      await pool.execute(
-        `UPDATE salary_coefficients SET multiplier = ?, description = ? WHERE type = ?`,
-        [multiplier, description || null, type]
-      );
-      const [rows] = await pool.execute('SELECT * FROM salary_coefficients WHERE type = ?', [type]);
-      res.json(toCamelCase(rows[0]));
-    }
+    const [rows] = await pool.execute('SELECT * FROM salary_coefficients WHERE id = ?', [id]);
+    res.json(toCamelCase(rows[0]));
   } catch (err) {
     console.error('Update salary coefficient error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// DELETE /api/salary/coefficients/:type — remove a coefficient type
+router.delete('/coefficients/:type', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const type = req.params.type;
+    await pool.execute('DELETE FROM salary_coefficients WHERE type = ?', [type]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete salary coefficient error:', err);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });
@@ -300,7 +305,11 @@ router.get('/records', authenticate, async (req, res) => {
     );
 
     const [rows] = await pool.query(
-      `SELECT sr.*, e.employee_code, d.name AS department, e.position
+      `SELECT sr.*, e.employee_code, d.name AS department, e.position,
+         e.attendance_score,
+         (SELECT COALESCE(SUM(ar.working_hours),0) FROM attendance_records ar
+          WHERE ar.employee_id = sr.employee_id AND DATE_FORMAT(ar.date,'%Y-%m') = sr.month
+            AND ar.check_out_time IS NOT NULL) AS total_working_hours
        ${baseJoin}
        ${where} ORDER BY ${sortBy} ${sortDir} LIMIT ${limit} OFFSET ${offset}`,
       params
@@ -308,14 +317,19 @@ router.get('/records', authenticate, async (req, res) => {
 
     // Summary stats for the full filtered set
     const [sumResult] = await pool.query(
-      `SELECT COALESCE(SUM(sr.net_salary), 0) AS total_net, COALESCE(SUM(sr.gross_salary), 0) AS total_gross
+      `SELECT COALESCE(SUM(sr.net_salary), 0) AS total_net, COALESCE(SUM(sr.gross_salary), 0) AS total_gross,
+              COALESCE(SUM(sr.ot_hours), 0) AS total_ot_hours
        ${baseJoin} ${where}`, params
     );
 
     res.json({
       data: toCamelCaseArray(rows),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-      summary: { totalNet: parseFloat(sumResult[0].total_net), totalGross: parseFloat(sumResult[0].total_gross) },
+      summary: {
+        totalNet: parseFloat(sumResult[0].total_net),
+        totalGross: parseFloat(sumResult[0].total_gross),
+        totalOtHours: parseFloat(sumResult[0].total_ot_hours || 0),
+      },
       departments: depts.map(d => d.department),
     });
   } catch (err) {
@@ -366,13 +380,20 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
     for (const ts of allTimesheets) tsMap.set(ts.employee_id, ts);
 
     const [allHours] = await pool.execute(
-      `SELECT employee_id, COALESCE(SUM(working_hours), 0) AS total_hours
+      `SELECT employee_id,
+              COALESCE(SUM(working_hours), 0) AS total_hours,
+              COUNT(CASE WHEN working_hours >= 8 THEN 1 END) AS full_work_days,
+              COUNT(CASE WHEN check_in_time IS NOT NULL THEN 1 END) AS present_days_att
        FROM attendance_records
        WHERE DATE_FORMAT(date, '%Y-%m') = ? AND check_out_time IS NOT NULL
        GROUP BY employee_id`, [month]
     );
     const hoursMap = new Map();
-    for (const h of allHours) hoursMap.set(h.employee_id, parseFloat(h.total_hours));
+    for (const h of allHours) hoursMap.set(h.employee_id, {
+      totalHours: parseFloat(h.total_hours),
+      fullWorkDays: parseInt(h.full_work_days || 0),
+      presentDays: parseInt(h.present_days_att || 0),
+    });
 
     const [allPenalties] = await pool.execute(
       `SELECT employee_id, COALESCE(SUM(amount), 0) AS total
@@ -389,16 +410,51 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
         const c = JSON.parse(cfStr || '{}');
         return {
           salaryBasis: c.salaryBasis || 'hourly',
+          hourlyRate: c.hourlyRate ? parseFloat(c.hourlyRate) : null, // explicit hourly rate
+          workDaysPerMonth: c.workDaysPerMonth ? parseInt(c.workDaysPerMonth) : 22,
           otMultiplier: c.otMultiplier ?? 1.5,
           latePenaltyPerDay: c.latePenaltyPerDay ?? 50000,
           includeOT: c.includeOT !== false,
           includeAllowances: c.includeAllowances !== false,
           includeDeductions: c.includeDeductions !== false,
           includeLatePenalty: c.includeLatePenalty !== false,
+          formulaNodes: Array.isArray(c.formulaNodes) ? c.formulaNodes : [],
         };
       } catch {
-        return { salaryBasis: 'hourly', otMultiplier: 1.5, latePenaltyPerDay: 50000, includeOT: true, includeAllowances: true, includeDeductions: true, includeLatePenalty: true };
+        return { salaryBasis: 'hourly', hourlyRate: null, workDaysPerMonth: 22, otMultiplier: 1.5, latePenaltyPerDay: 50000, includeOT: true, includeAllowances: true, includeDeductions: true, includeLatePenalty: true, formulaNodes: [] };
       }
+    }
+
+    // Evaluate a drag-drop formula left-to-right
+    function evaluateFormula(nodes, vars) {
+      if (!nodes || nodes.length === 0) return null;
+      const valueOf = (blockId) => {
+        switch (blockId) {
+          case 'working_hours': return vars.working_hours;
+          case 'present_days': return vars.present_days;
+          case 'hourly_rate': return vars.hourly_rate;
+          case 'daily_rate': return vars.daily_rate;
+          case 'base_salary': return vars.base_salary;
+          case 'ot_hours': return vars.ot_hours;
+          case 'ot_multiplier': return vars.ot_multiplier;
+          case 'allowances': return vars.allowances;
+          case 'late_days': return vars.late_days;
+          case 'late_penalty_rate': return vars.late_penalty_rate;
+          case 'deductions': return vars.deductions;
+          default: return 0;
+        }
+      };
+      let result = valueOf(nodes[0].blockId);
+      for (let i = 1; i < nodes.length; i++) {
+        const val = valueOf(nodes[i].blockId);
+        switch (nodes[i].operator) {
+          case '+': result = result + val; break;
+          case '-': result = result - val; break;
+          case '×': result = result * val; break;
+          case '÷': result = val !== 0 ? result / val : 0; break;
+        }
+      }
+      return Math.max(0, result);
     }
 
     // Build batch insert values
@@ -419,47 +475,85 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
 
       const timesheet = tsMap.get(emp.emp_id) || {};
       const totalWorkDays = timesheet.total_work_days || 22;
-      const presentDays = timesheet.present_days || 0;
       const lateDays = timesheet.late_days || 0;
       const totalOtHours = parseFloat(timesheet.total_ot_hours || 0);
 
+      // Use actual worked hours if available, fall back to timesheet
+      const hoursData = hoursMap.get(emp.emp_id) || {};
+      const actualWorkedHours = hoursData.totalHours || 0;
+      // Work days = days where employee worked >= 8h (proper logic per user requirement)
+      const presentDays = hoursData.fullWorkDays || timesheet.present_days || 0;
+
       const standardHoursPerDay = 8;
-      const totalStandardHours = totalWorkDays * standardHoursPerDay;
-      const hourlyRate = baseSalary / totalStandardHours;
+      // If preset defines explicit hourly rate, use it; otherwise derive from monthly salary
+      const stdWorkDays = config.workDaysPerMonth || 22;
+      const totalStandardHours = stdWorkDays * standardHoursPerDay;
+      const hourlyRate = config.hourlyRate != null && config.hourlyRate > 0
+        ? config.hourlyRate
+        : baseSalary / (totalStandardHours || 176);
       const dailyRate = hourlyRate * standardHoursPerDay;
 
-      const actualWorkedHours = hoursMap.get(emp.emp_id) || 0;
       const rawDeductions = penMap.get(emp.emp_id) || 0;
 
-      // Base pay
-      let basePay;
-      if (config.salaryBasis === 'daily') {
-        basePay = presentDays * dailyRate;
-      } else if (config.salaryBasis === 'fixed') {
-        basePay = baseSalary;
+      let grossSalary, netSalary, otPay, allowancePay, latePenalty, deductionsPay;
+
+      if (config.formulaNodes && config.formulaNodes.length > 0) {
+        // Drag-drop formula mode: evaluate entire formula as gross salary
+        const formulaVars = {
+          working_hours: actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay),
+          present_days: presentDays,
+          hourly_rate: hourlyRate,
+          daily_rate: dailyRate,
+          base_salary: baseSalary,
+          ot_hours: totalOtHours,
+          ot_multiplier: config.otMultiplier,
+          allowances: allowances,
+          late_days: lateDays,
+          late_penalty_rate: config.latePenaltyPerDay,
+          deductions: rawDeductions,
+        };
+        grossSalary = evaluateFormula(config.formulaNodes, formulaVars);
+        // Don't double-count components already inside the formula
+        const hasOT = config.formulaNodes.some(n => n.blockId === 'ot_hours');
+        const hasAllowances = config.formulaNodes.some(n => n.blockId === 'allowances');
+        const hasLatePenalty = config.formulaNodes.some(n => n.blockId === 'late_days' || n.blockId === 'late_penalty_rate');
+        const hasDeductions = config.formulaNodes.some(n => n.blockId === 'deductions');
+        otPay = hasOT ? 0 : (config.includeOT ? (totalOtHours * hourlyRate * config.otMultiplier) : 0);
+        allowancePay = hasAllowances ? 0 : (config.includeAllowances ? allowances : 0);
+        latePenalty = hasLatePenalty ? 0 : (config.includeLatePenalty ? (lateDays * config.latePenaltyPerDay) : 0);
+        deductionsPay = hasDeductions ? 0 : (config.includeDeductions ? rawDeductions : 0);
+        grossSalary = grossSalary + otPay + allowancePay;
+        netSalary = grossSalary - deductionsPay - latePenalty;
       } else {
-        const workedHours = actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay);
-        basePay = workedHours * hourlyRate;
+        // Legacy salaryBasis mode
+        let basePay;
+        if (config.salaryBasis === 'daily') {
+          basePay = presentDays * dailyRate;
+        } else if (config.salaryBasis === 'fixed') {
+          basePay = baseSalary;
+        } else {
+          const workedHours = actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay);
+          basePay = workedHours * hourlyRate;
+        }
+        const otMultiplier = coeffMap.get('overtime') || config.otMultiplier;
+        otPay = config.includeOT ? (totalOtHours * hourlyRate * otMultiplier) : 0;
+        allowancePay = config.includeAllowances ? allowances : 0;
+        deductionsPay = config.includeDeductions ? rawDeductions : 0;
+        latePenalty = config.includeLatePenalty ? (lateDays * config.latePenaltyPerDay) : 0;
+        grossSalary = basePay + otPay + allowancePay;
+        netSalary = grossSalary - deductionsPay - latePenalty;
       }
 
-      const otMultiplier = coeffMap.get('overtime') || config.otMultiplier;
-      const otPay = config.includeOT ? (totalOtHours * hourlyRate * otMultiplier) : 0;
-      const allowancePay = config.includeAllowances ? allowances : 0;
-      const insurance = 0; // Will be set by admin
-      const healthInsurance = 0; // Will be set by admin
-      const deductions = config.includeDeductions ? rawDeductions : 0;
-      const dedication = 0; // Will be calculated/set by admin
-      const latePenalty = config.includeLatePenalty ? (lateDays * config.latePenaltyPerDay) : 0;
-
-      const grossSalary = basePay + otPay + allowancePay + insurance + healthInsurance;
-      const netSalary = grossSalary - deductions - latePenalty - dedication;
+      const insurance = 0;
+      const healthInsurance = 0;
+      const dedication = 0;
 
       insertValues.push([
         uuidv4(), emp.emp_id, emp.employee_name, month, presetId, presetName,
         baseSalary, totalWorkDays, presentDays, totalOtHours,
-        Math.round(otPay), allowances, JSON.stringify({}), // allowances_detail empty
+        Math.round(otPay), allowances, JSON.stringify({}),
         insurance, healthInsurance,
-        deductions, JSON.stringify({}), // deductions_detail empty
+        Math.round(deductionsPay), JSON.stringify({}),
         dedication, Math.round(latePenalty),
         Math.round(grossSalary), Math.round(netSalary)
       ]);
@@ -573,6 +667,218 @@ router.post('/unlock-month', authenticate, requireSalaryRole, async (req, res) =
     res.json({ message: `Đã mở khoá lương tháng ${month}` });
   } catch (err) {
     console.error('Unlock salary month error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// GET /api/salary/attendance-scores?month=YYYY-MM&page=1&limit=50&search=&dept=&rank=&sortBy=monthlyScore&sortDir=desc
+router.get('/attendance-scores', authenticate, adminOrSalaryRole, async (req, res) => {
+  try {
+    const month = req.query.month || new Date().toISOString().substring(0, 7);
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(10, parseInt(req.query.limit) || 50));
+    const search = (req.query.search || '').trim();
+    const deptFilter = (req.query.dept || '').trim();
+    const rankFilter = (req.query.rank || '').trim();
+    const sortByParam = req.query.sortBy || 'monthlyScore';
+    const sortDir = (req.query.sortDir || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    const offset = (page - 1) * limit;
+
+    // Allowed sort columns mapped to SQL expressions (applied after score calc via subquery)
+    const allowedSortCols = ['monthlyScore', 'totalWorkingHours', 'fullDays', 'lateDays', 'absentDays', 'otHours', 'employeeName'];
+    const sortCol = allowedSortCols.includes(sortByParam) ? sortByParam : 'monthlyScore';
+
+    const [depts] = await pool.execute('SELECT id, name FROM departments');
+    const deptMap = new Map();
+    depts.forEach(d => deptMap.set(d.id, d.name));
+
+    // Find dept_id for filter
+    let deptIdFilter = null;
+    if (deptFilter) {
+      for (const [id, name] of deptMap.entries()) {
+        if (name === deptFilter) { deptIdFilter = id; break; }
+      }
+      // If dept name not found, return empty
+      if (deptIdFilter === null) {
+        return res.json({ month, data: [], total: 0, page, limit, totalPages: 0, departments: [...deptMap.values()].sort() });
+      }
+    }
+
+    // Build WHERE for employees
+    const whereParams = [];
+    let whereExtra = ' AND is_active = 1';
+    if (search) {
+      whereExtra += ' AND (name LIKE ? OR employee_code LIKE ?)';
+      whereParams.push(`%${search}%`, `%${search}%`);
+    }
+    if (deptIdFilter) {
+      whereExtra += ' AND department_id = ?';
+      whereParams.push(deptIdFilter);
+    }
+
+    // Fetch all matching employees (no LIMIT yet — we need to compute scores for rank filter & sort)
+    const [allEmployees] = await pool.execute(
+      `SELECT id, name, employee_code, department_id, attendance_score
+       FROM employees WHERE 1=1${whereExtra}
+       ORDER BY name`,
+      whereParams
+    );
+
+    if (allEmployees.length === 0) {
+      return res.json({ month, data: [], total: 0, page, limit, totalPages: 0, departments: [...deptMap.values()].sort() });
+    }
+
+    const empIds = allEmployees.map(e => e.id);
+    const inPH = empIds.map(() => '?').join(',');
+
+    const [attendanceData] = await pool.query(
+      `SELECT
+         employee_id,
+         COUNT(CASE WHEN check_in_time IS NOT NULL THEN 1 END) AS present_days,
+         COUNT(CASE WHEN status = 'late' THEN 1 END) AS late_days,
+         COUNT(CASE WHEN status = 'absent' THEN 1 END) AS absent_days,
+         COUNT(CASE WHEN working_hours >= 8 AND check_out_time IS NOT NULL THEN 1 END) AS full_days,
+         COALESCE(SUM(CASE WHEN check_out_time IS NOT NULL THEN working_hours ELSE 0 END), 0) AS total_working_hours
+       FROM attendance_records
+       WHERE DATE_FORMAT(date, '%Y-%m') = ? AND employee_id IN (${inPH})
+       GROUP BY employee_id`,
+      [month, ...empIds]
+    );
+    const attMap = new Map();
+    attendanceData.forEach(a => attMap.set(a.employee_id, a));
+
+    const [otData] = await pool.query(
+      `SELECT employee_id, COALESCE(SUM(hours), 0) AS total_ot_hours
+       FROM ot_requests
+       WHERE DATE_FORMAT(date, '%Y-%m') = ? AND status = 'approved' AND employee_id IN (${inPH})
+       GROUP BY employee_id`,
+      [month, ...empIds]
+    );
+    const otMap = new Map();
+    otData.forEach(o => otMap.set(o.employee_id, parseFloat(o.total_ot_hours)));
+
+    // Compute full result set
+    let result = allEmployees.map(emp => {
+      const att = attMap.get(emp.id) || {};
+      const otHours = otMap.get(emp.id) || 0;
+      const presentDays = parseInt(att.present_days || 0);
+      const lateDays = parseInt(att.late_days || 0);
+      const absentDays = parseInt(att.absent_days || 0);
+      const fullDays = parseInt(att.full_days || 0);
+      const totalWorkingHours = parseFloat(att.total_working_hours || 0);
+
+      const absentDeduction = absentDays * 5;
+      const lateDeduction = lateDays * 2;
+      const otBonus = Math.min(parseFloat((otHours * 0.5).toFixed(1)), 10);
+      const monthlyScore = parseFloat(Math.max(0, Math.min(100, 100 - absentDeduction - lateDeduction + otBonus)).toFixed(1));
+
+      let rank = 'A';
+      if (monthlyScore >= 95) rank = 'S';
+      else if (monthlyScore >= 85) rank = 'A';
+      else if (monthlyScore >= 70) rank = 'B';
+      else if (monthlyScore >= 50) rank = 'C';
+      else rank = 'D';
+
+      return {
+        employeeId: emp.id,
+        employeeName: emp.name,
+        employeeCode: emp.employee_code,
+        department: deptMap.get(emp.department_id) || '',
+        currentScore: parseFloat(emp.attendance_score || 100),
+        presentDays, lateDays, absentDays, fullDays, totalWorkingHours,
+        otHours, absentDeduction, lateDeduction, otBonus, monthlyScore, rank,
+      };
+    });
+
+    // Apply rank filter after score computation
+    if (rankFilter && ['S', 'A', 'B', 'C', 'D'].includes(rankFilter.toUpperCase())) {
+      result = result.filter(r => r.rank === rankFilter.toUpperCase());
+    }
+
+    // Sort
+    const sortColMap = {
+      monthlyScore: 'monthlyScore',
+      totalWorkingHours: 'totalWorkingHours',
+      fullDays: 'fullDays',
+      lateDays: 'lateDays',
+      absentDays: 'absentDays',
+      otHours: 'otHours',
+      employeeName: 'employeeName',
+    };
+    const actualCol = sortColMap[sortCol] || 'monthlyScore';
+    result.sort((a, b) => {
+      const va = a[actualCol];
+      const vb = b[actualCol];
+      if (va === vb) return 0;
+      const cmp = typeof va === 'string' ? va.localeCompare(vb) : (va > vb ? 1 : -1);
+      return sortDir === 'ASC' ? cmp : -cmp;
+    });
+
+    const totalCount = result.length;
+    const totalPages = Math.ceil(totalCount / limit);
+    const paged = result.slice(offset, offset + limit);
+
+    res.json({
+      month, data: paged, total: totalCount, page, limit, totalPages,
+      departments: [...deptMap.values()].sort(),
+    });
+  } catch (err) {
+    console.error('Get attendance scores error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/records/:id/adjust-ot — admin adjusts OT/holiday effective hours for a salary record
+router.put('/records/:id/adjust-ot', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { otHoursOverride, holidayHoursOverride, otBonusDesc, note } = req.body;
+    const [existing] = await pool.execute('SELECT * FROM salary_records WHERE id = ?', [req.params.id]);
+    if (existing.length === 0) return res.status(404).json({ error: 'Không tìm thấy bản ghi lương' });
+
+    const record = existing[0];
+
+    // Parse preset config for recalculation
+    let baseSalary = parseFloat(record.base_salary || 0);
+    let totalWorkDays = record.total_work_days || 22;
+    const standardHoursPerDay = 8;
+    const hourlyRate = baseSalary / (totalWorkDays * standardHoursPerDay || 176);
+
+    // Get preset config for OT multiplier
+    let otMultiplier = 1.5;
+    if (record.preset_id) {
+      const [presets] = await pool.execute('SELECT custom_formula FROM salary_presets WHERE id = ?', [record.preset_id]);
+      if (presets.length > 0) {
+        try {
+          const cfg = JSON.parse(presets[0].custom_formula || '{}');
+          otMultiplier = cfg.otMultiplier || 1.5;
+        } catch { }
+      }
+    }
+
+    const newOtHours = otHoursOverride !== undefined ? parseFloat(otHoursOverride) : parseFloat(record.ot_hours || 0);
+    const newOtPay = Math.round(newOtHours * hourlyRate * otMultiplier);
+
+    // Rebuild gross & net
+    const newGross = Math.round(
+      (parseFloat(record.gross_salary || 0) - parseFloat(record.ot_pay || 0)) + newOtPay
+    );
+    const newNet = Math.round(
+      (parseFloat(record.net_salary || 0) - parseFloat(record.ot_pay || 0)) + newOtPay
+    );
+
+    // Store adjustment note in deductions_detail
+    let adjInfo = {};
+    try { adjInfo = JSON.parse(record.deductions_detail || '{}'); } catch { }
+    adjInfo._otAdjust = { otHoursOverride: newOtHours, note: note || '', desc: otBonusDesc || '' };
+
+    await pool.execute(
+      `UPDATE salary_records SET ot_hours = ?, ot_pay = ?, gross_salary = ?, net_salary = ?, deductions_detail = ? WHERE id = ?`,
+      [newOtHours, newOtPay, newGross, newNet, JSON.stringify(adjInfo), req.params.id]
+    );
+    const [rows] = await pool.execute('SELECT * FROM salary_records WHERE id = ?', [req.params.id]);
+    res.json(toCamelCase(rows[0]));
+  } catch (err) {
+    console.error('Adjust OT error:', err);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });

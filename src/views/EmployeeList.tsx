@@ -2,6 +2,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Pagination from "../components/Pagination";
+import { useAuth } from "../contexts/AuthContext";
+import { authApi } from "../services/api";
 import {
   deleteEmployee,
   deleteFaceDescriptor,
@@ -10,12 +12,24 @@ import {
 } from "../store/storage";
 import type { Employee } from "../types";
 import { ROLE_LEVEL_LABELS } from "../types";
-import { useAuth } from "../contexts/AuthContext";
+
+const AVAILABLE_ROLES = [
+  {
+    key: "hr-manager",
+    label: "HR Manager",
+    desc: "Được phép thêm/quản lý nhân viên",
+  },
+  {
+    key: "salary_manager",
+    label: "Quản lý lương",
+    desc: "Được phép xem và chỉnh sửa bảng lương",
+  },
+];
 
 const PAGE_SIZE = 30;
 
 export default function EmployeeList() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, canCreateEmployee } = useAuth();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [faceRegistered, setFaceRegistered] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -31,7 +45,22 @@ export default function EmployeeList() {
   const [filterRoleLevel, setFilterRoleLevel] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterPosition, setFilterPosition] = useState("");
-  const [confirmDeleteEmployee, setConfirmDeleteEmployee] = useState<Employee | null>(null);
+  const [confirmDeleteEmployee, setConfirmDeleteEmployee] =
+    useState<Employee | null>(null);
+
+  // Role management modal
+  const [roleModalEmp, setRoleModalEmp] = useState<Employee | null>(null);
+  const [roleModalData, setRoleModalData] = useState<{
+    userId: string | null;
+    username: string | null;
+    roles: string[];
+  } | null>(null);
+  const [roleModalLoading, setRoleModalLoading] = useState(false);
+  const [roleModalSaving, setRoleModalSaving] = useState(false);
+  const [roleModalMsg, setRoleModalMsg] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   // Sort
   const [sortBy, setSortBy] = useState("created_at");
@@ -64,7 +93,16 @@ export default function EmployeeList() {
     } finally {
       setLoading(false);
     }
-  }, [page, search, filterDept, filterRoleLevel, filterStatus, filterPosition, sortBy, sortDir]);
+  }, [
+    page,
+    search,
+    filterDept,
+    filterRoleLevel,
+    filterStatus,
+    filterPosition,
+    sortBy,
+    sortDir,
+  ]);
 
   // Load face descriptors once
   useEffect(() => {
@@ -114,6 +152,46 @@ export default function EmployeeList() {
     return sortDir === "asc" ? "↑" : "↓";
   }
 
+  async function openRoleModal(emp: Employee) {
+    setRoleModalEmp(emp);
+    setRoleModalData(null);
+    setRoleModalMsg(null);
+    setRoleModalLoading(true);
+    try {
+      const data = await authApi.getUserRoles(emp.id);
+      setRoleModalData(data);
+    } catch {
+      setRoleModalMsg({ type: "error", text: "Không thể tải thông tin role" });
+    } finally {
+      setRoleModalLoading(false);
+    }
+  }
+
+  function toggleRole(role: string) {
+    if (!roleModalData) return;
+    const has = roleModalData.roles.includes(role);
+    setRoleModalData({
+      ...roleModalData,
+      roles: has
+        ? roleModalData.roles.filter((r) => r !== role)
+        : [...roleModalData.roles, role],
+    });
+  }
+
+  async function saveRoles() {
+    if (!roleModalEmp || !roleModalData) return;
+    setRoleModalSaving(true);
+    setRoleModalMsg(null);
+    try {
+      await authApi.setUserRoles(roleModalEmp.id, roleModalData.roles);
+      setRoleModalMsg({ type: "success", text: "Cập nhật role thành công!" });
+    } catch {
+      setRoleModalMsg({ type: "error", text: "Lỗi khi lưu role" });
+    } finally {
+      setRoleModalSaving(false);
+    }
+  }
+
   async function handleDelete(employee: Employee) {
     await deleteEmployee(employee.id);
     await deleteFaceDescriptor(employee.id);
@@ -123,253 +201,399 @@ export default function EmployeeList() {
 
   return (
     <>
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Quản lý nhân viên
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {total.toLocaleString()} nhân viên trong hệ thống
-          </p>
+      <div>
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              Quản lý nhân viên
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">
+              {total.toLocaleString()} nhân viên trong hệ thống
+            </p>
+          </div>
+          {canCreateEmployee && (
+            <Link
+              href="/employees/new"
+              className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors"
+            >
+              + Thêm nhân viên
+            </Link>
+          )}
         </div>
-        {isAdmin && (
-          <Link
-            href="/employees/new"
-            className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors"
-          >
-            + Thêm nhân viên
-          </Link>
-        )}
-      </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
+        {/* Filters */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <input
+                type="text"
+                placeholder="🔍 Tìm theo tên hoặc mã NV..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+            </div>
+            <select
+              value={filterDept}
+              onChange={(e) =>
+                handleFilterChange(setFilterDept, e.target.value)
+              }
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">Tất cả phòng ban</option>
+              {departments.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterRoleLevel}
+              onChange={(e) =>
+                handleFilterChange(setFilterRoleLevel, e.target.value)
+              }
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">Tất cả cấp bậc</option>
+              {Object.entries(ROLE_LEVEL_LABELS).map(([level, label]) => (
+                <option key={level} value={level}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterStatus}
+              onChange={(e) =>
+                handleFilterChange(setFilterStatus, e.target.value)
+              }
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">Tất cả trạng thái</option>
+              <option value="true">Hoạt động</option>
+              <option value="false">Nghỉ việc</option>
+            </select>
             <input
               type="text"
-              placeholder="🔍 Tìm theo tên hoặc mã NV..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              placeholder="Lọc chức vụ..."
+              value={filterPosition}
+              onChange={(e) =>
+                handleFilterChange(setFilterPosition, e.target.value)
+              }
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[140px]"
             />
           </div>
-          <select
-            value={filterDept}
-            onChange={(e) => handleFilterChange(setFilterDept, e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="">Tất cả phòng ban</option>
-            {departments.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
-          <select
-            value={filterRoleLevel}
-            onChange={(e) => handleFilterChange(setFilterRoleLevel, e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="">Tất cả cấp bậc</option>
-            {Object.entries(ROLE_LEVEL_LABELS).map(([level, label]) => (
-              <option key={level} value={level}>{label}</option>
-            ))}
-          </select>
-          <select
-            value={filterStatus}
-            onChange={(e) => handleFilterChange(setFilterStatus, e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="">Tất cả trạng thái</option>
-            <option value="true">Hoạt động</option>
-            <option value="false">Nghỉ việc</option>
-          </select>
-          <input
-            type="text"
-            placeholder="Lọc chức vụ..."
-            value={filterPosition}
-            onChange={(e) => handleFilterChange(setFilterPosition, e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 min-w-[140px]"
+        </div>
+
+        {/* Table */}
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            onPageChange={setPage}
+            label="nhân viên"
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Nhân viên
+                  </th>
+                  <th
+                    className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700"
+                    onClick={() => toggleSort("employee_code")}
+                  >
+                    Mã NV {sortIcon("employee_code")}
+                  </th>
+                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Phòng ban
+                  </th>
+                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Chức vụ
+                  </th>
+                  <th
+                    className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700"
+                    onClick={() => toggleSort("role_level")}
+                  >
+                    Cấp bậc {sortIcon("role_level")}
+                  </th>
+                  <th className="text-center px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Face ID
+                  </th>
+                  <th
+                    className="text-center px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700"
+                    onClick={() => toggleSort("is_active")}
+                  >
+                    Trạng thái {sortIcon("is_active")}
+                  </th>
+                  <th className="text-right px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    Thao tác
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} className="text-center py-12 text-gray-400">
+                      Đang tải...
+                    </td>
+                  </tr>
+                ) : employees.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="text-center py-12 text-gray-400">
+                      {total === 0 &&
+                      !search &&
+                      !filterDept &&
+                      !filterRoleLevel &&
+                      !filterStatus ? (
+                        <div>
+                          <p className="mb-2">Chưa có nhân viên nào</p>
+                          <Link
+                            href="/employees/new"
+                            className="text-primary-600 hover:underline text-sm"
+                          >
+                            Thêm nhân viên đầu tiên →
+                          </Link>
+                        </div>
+                      ) : (
+                        "Không tìm thấy nhân viên phù hợp"
+                      )}
+                    </td>
+                  </tr>
+                ) : (
+                  employees.map((emp) => (
+                    <tr
+                      key={emp.id}
+                      className="hover:bg-gray-50 transition-colors"
+                    >
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                            {emp.faceImage ? (
+                              <img
+                                src={emp.faceImage}
+                                alt={emp.name}
+                                className="w-9 h-9 rounded-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-sm font-semibold text-primary-700">
+                                {emp.name.charAt(0)}
+                              </span>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">
+                              {emp.name}
+                            </p>
+                            <p className="text-xs text-gray-400">{emp.email}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-sm text-gray-600 font-mono">
+                        {emp.employeeCode}
+                      </td>
+                      <td className="px-5 py-3 text-sm text-gray-600">
+                        {emp.department}
+                      </td>
+                      <td className="px-5 py-3 text-sm text-gray-600">
+                        {emp.position}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                            emp.roleLevel === 1
+                              ? "bg-red-100 text-red-700"
+                              : emp.roleLevel === 2
+                                ? "bg-purple-100 text-purple-700"
+                                : emp.roleLevel === 3
+                                  ? "bg-blue-100 text-blue-700"
+                                  : emp.roleLevel === 4
+                                    ? "bg-amber-100 text-amber-700"
+                                    : "bg-gray-100 text-gray-600"
+                          }`}
+                        >
+                          {ROLE_LEVEL_LABELS[emp.roleLevel] || "Nhân viên"}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        {faceRegistered.has(emp.id) ? (
+                          <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                            Đã đăng ký
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs font-medium">
+                            Chưa có
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        {emp.isActive ? (
+                          <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
+                            Hoạt động
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-xs font-medium">
+                            Nghỉ việc
+                          </span>
+                        )}
+                      </td>
+                      {isAdmin && (
+                        <td className="px-5 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Link
+                              href={`/employees/${emp.id}/edit`}
+                              className="px-2 py-1 rounded-lg hover:bg-gray-100 text-xs text-primary-600 font-medium transition-colors"
+                            >
+                              Sửa
+                            </Link>
+                            <button
+                              onClick={() => openRoleModal(emp)}
+                              className="px-2 py-1 rounded-lg hover:bg-purple-50 text-xs text-purple-600 font-medium transition-colors"
+                              title="Quản lý quyền"
+                            >
+                              Quyền
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteEmployee(emp)}
+                              className="px-2 py-1 rounded-lg hover:bg-red-50 text-xs text-red-600 font-medium transition-colors"
+                            >
+                              Xóa
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            onPageChange={setPage}
+            label="nhân viên"
           />
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <Pagination page={page} totalPages={totalPages} total={total} onPageChange={setPage} label="nhân viên" />
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Nhân viên
-                </th>
-                <th
-                  className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700"
-                  onClick={() => toggleSort("employee_code")}
-                >
-                  Mã NV {sortIcon("employee_code")}
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Phòng ban
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Chức vụ
-                </th>
-                <th
-                  className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700"
-                  onClick={() => toggleSort("role_level")}
-                >
-                  Cấp bậc {sortIcon("role_level")}
-                </th>
-                <th className="text-center px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Face ID
-                </th>
-                <th
-                  className="text-center px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:text-gray-700"
-                  onClick={() => toggleSort("is_active")}
-                >
-                  Trạng thái {sortIcon("is_active")}
-                </th>
-                <th className="text-right px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                  Thao tác
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-12 text-gray-400">
-                    Đang tải...
-                  </td>
-                </tr>
-              ) : employees.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-12 text-gray-400">
-                    {total === 0 && !search && !filterDept && !filterRoleLevel && !filterStatus ? (
-                      <div>
-                        <p className="mb-2">Chưa có nhân viên nào</p>
-                        <Link
-                          href="/employees/new"
-                          className="text-primary-600 hover:underline text-sm"
-                        >
-                          Thêm nhân viên đầu tiên →
-                        </Link>
-                      </div>
-                    ) : (
-                      "Không tìm thấy nhân viên phù hợp"
-                    )}
-                  </td>
-                </tr>
+      <ConfirmDialog
+        open={!!confirmDeleteEmployee}
+        title="Xóa nhân viên"
+        message={`Bạn có chắc muốn xóa nhân viên "${confirmDeleteEmployee?.name}"?`}
+        confirmLabel="Xóa"
+        onConfirm={() =>
+          confirmDeleteEmployee && handleDelete(confirmDeleteEmployee)
+        }
+        onCancel={() => setConfirmDeleteEmployee(null)}
+      />
+
+      {/* Role management modal */}
+      {roleModalEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">
+                  Quản lý quyền đặc biệt
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {roleModalEmp.name} ({roleModalEmp.employeeCode})
+                </p>
+              </div>
+              <button
+                onClick={() => setRoleModalEmp(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-6">
+              {roleModalLoading ? (
+                <div className="flex justify-center py-6">
+                  <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : roleModalData?.userId === null ? (
+                <p className="text-sm text-amber-600 bg-amber-50 rounded-lg px-4 py-3">
+                  Nhân viên này chưa có tài khoản đăng nhập. Không thể gán
+                  quyền.
+                </p>
               ) : (
-                employees.map((emp) => (
-                  <tr
-                    key={emp.id}
-                    className="hover:bg-gray-50 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
-                          {emp.faceImage ? (
-                            <img
-                              src={emp.faceImage}
-                              alt={emp.name}
-                              className="w-9 h-9 rounded-full object-cover"
-                            />
-                          ) : (
-                            <span className="text-sm font-semibold text-primary-700">
-                              {emp.name.charAt(0)}
-                            </span>
-                          )}
-                        </div>
+                <>
+                  <p className="text-xs text-gray-500 mb-1">
+                    Tài khoản:{" "}
+                    <span className="font-medium text-gray-700">
+                      {roleModalData?.username}
+                    </span>
+                  </p>
+                  <div className="space-y-3 mt-4">
+                    {AVAILABLE_ROLES.map((r) => (
+                      <label
+                        key={r.key}
+                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                          roleModalData?.roles.includes(r.key)
+                            ? "border-purple-300 bg-purple-50"
+                            : "border-gray-200 hover:border-gray-300"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={
+                            roleModalData?.roles.includes(r.key) ?? false
+                          }
+                          onChange={() => toggleRole(r.key)}
+                          className="mt-0.5 w-4 h-4 accent-purple-600"
+                        />
                         <div>
-                          <p className="text-sm font-medium text-gray-900">
-                            {emp.name}
+                          <p className="text-sm font-medium text-gray-800">
+                            {r.label}
                           </p>
-                          <p className="text-xs text-gray-400">{emp.email}</p>
+                          <p className="text-xs text-gray-500">{r.desc}</p>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-sm text-gray-600 font-mono">
-                      {emp.employeeCode}
-                    </td>
-                    <td className="px-5 py-3 text-sm text-gray-600">
-                      {emp.department}
-                    </td>
-                    <td className="px-5 py-3 text-sm text-gray-600">
-                      {emp.position}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                        emp.roleLevel === 1 ? 'bg-red-100 text-red-700' :
-                        emp.roleLevel === 2 ? 'bg-purple-100 text-purple-700' :
-                        emp.roleLevel === 3 ? 'bg-blue-100 text-blue-700' :
-                        emp.roleLevel === 4 ? 'bg-amber-100 text-amber-700' :
-                        'bg-gray-100 text-gray-600'
-                      }`}>
-                        {ROLE_LEVEL_LABELS[emp.roleLevel] || 'Nhân viên'}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-center">
-                      {faceRegistered.has(emp.id) ? (
-                        <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
-                          Đã đăng ký
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs font-medium">
-                          Chưa có
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-center">
-                      {emp.isActive ? (
-                        <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs font-medium">
-                          Hoạt động
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-xs font-medium">
-                          Nghỉ việc
-                        </span>
-                      )}
-                    </td>
-                    {isAdmin && (
-                    <td className="px-5 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Link
-                          href={`/employees/${emp.id}/edit`}
-                          className="px-2 py-1 rounded-lg hover:bg-gray-100 text-xs text-primary-600 font-medium transition-colors"
-                        >
-                          Sửa
-                        </Link>
-                        <button
-                          onClick={() => setConfirmDeleteEmployee(emp)}
-                          className="px-2 py-1 rounded-lg hover:bg-red-50 text-xs text-red-600 font-medium transition-colors"
-                        >
-                          Xóa
-                        </button>
-                      </div>
-                    </td>
-                    )}
-                  </tr>
-                ))
+                      </label>
+                    ))}
+                  </div>
+                  {roleModalMsg && (
+                    <div
+                      className={`mt-4 text-sm px-4 py-2 rounded-lg ${
+                        roleModalMsg.type === "success"
+                          ? "bg-green-50 text-green-700"
+                          : "bg-red-50 text-red-700"
+                      }`}
+                    >
+                      {roleModalMsg.text}
+                    </div>
+                  )}
+                </>
               )}
-            </tbody>
-          </table>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+              <button
+                onClick={() => setRoleModalEmp(null)}
+                className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Đóng
+              </button>
+              {roleModalData?.userId && (
+                <button
+                  onClick={saveRoles}
+                  disabled={roleModalSaving}
+                  className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {roleModalSaving && (
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  )}
+                  Lưu thay đổi
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-
-        {/* Pagination */}
-        <Pagination page={page} totalPages={totalPages} total={total} onPageChange={setPage} label="nhân viên" />
-      </div>
-    </div>
-
-    <ConfirmDialog
-      open={!!confirmDeleteEmployee}
-      title="Xóa nhân viên"
-      message={`Bạn có chắc muốn xóa nhân viên "${confirmDeleteEmployee?.name}"?`}
-      confirmLabel="Xóa"
-      onConfirm={() => confirmDeleteEmployee && handleDelete(confirmDeleteEmployee)}
-      onCancel={() => setConfirmDeleteEmployee(null)}
-    />
+      )}
     </>
   );
 }

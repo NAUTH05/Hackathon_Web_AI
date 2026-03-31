@@ -15,7 +15,7 @@ import {
   saveFaceDescriptor,
   updateEmployee,
 } from "../store/storage";
-import type { Department } from "../types";
+import type { Department, Employee } from "../types";
 import { ROLE_LEVEL_LABELS } from "../types";
 
 export default function EmployeeForm() {
@@ -178,22 +178,35 @@ export default function EmployeeForm() {
           faceImage: faceImage || undefined,
         });
         employeeId = updated.id;
+        if (faceDescriptor)
+          await saveFaceDescriptor(
+            employeeId,
+            faceDescriptor,
+            faceImage || undefined,
+          );
+        router.push("/employees");
       } else {
-        const created = await addEmployee({
+        const created = (await addEmployee({
           ...form,
           avatar: avatarPreview || undefined,
           faceImage: faceImage || undefined,
-        });
+        })) as Employee & { defaultUsername?: string };
         employeeId = created.id;
-      }
-
-      if (faceDescriptor)
-        await saveFaceDescriptor(
-          employeeId,
-          faceDescriptor,
-          faceImage || undefined,
+        if (faceDescriptor)
+          await saveFaceDescriptor(
+            employeeId,
+            faceDescriptor,
+            faceImage || undefined,
+          );
+        const loginUsername =
+          (created as { defaultUsername?: string }).defaultUsername ||
+          form.employeeCode;
+        setSaveMessage(
+          `✅ Đã tạo nhân viên thành công!\n🔑 Tài khoản đăng nhập:\n   Username: ${loginUsername}\n   Mật khẩu mặc định: 123456\n(Nhân viên nên đổi mật khẩu sau khi đăng nhập lần đầu)`,
         );
-      router.push("/employees");
+        setTimeout(() => router.push("/employees"), 5000);
+        return;
+      }
     } catch (err) {
       setSaveMessage(err instanceof Error ? err.message : "Lỗi khi lưu");
     }
@@ -499,6 +512,14 @@ export default function EmployeeForm() {
             {isEdit ? "Cập nhật" : "Thêm nhân viên"}
           </button>
         </div>
+        {!isEdit && saveMessage.includes("Tài khoản đăng nhập") && (
+          <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-800 whitespace-pre-line">
+            {saveMessage}
+            <p className="mt-2 text-xs text-green-600">
+              Tự động chuyển trang sau 5 giây...
+            </p>
+          </div>
+        )}
       </form>
     </div>
   );

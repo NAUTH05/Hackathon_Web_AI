@@ -1,7 +1,8 @@
 const router = require('express').Router();
 const pool = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
-const { authenticate, adminOnly } = require('../middleware/auth');
+const bcrypt = require('bcrypt');
+const { authenticate, adminOnly, canCreateEmployee } = require('../middleware/auth');
 const { toCamelCase, toCamelCaseArray, logAudit } = require('../helpers');
 
 // GET /api/employees — list with pagination, filters, sorting
@@ -129,22 +130,45 @@ router.get('/:id', authenticate, async (req, res) => {
 });
 
 // POST /api/employees
-router.post('/', authenticate, adminOnly, async (req, res) => {
+router.post('/', authenticate, canCreateEmployee, async (req, res) => {
   try {
-    const { name, employeeCode, departmentId, position, roleLevel, email, phone, avatar } = req.body;
+    const { name, employeeCode, departmentId, position, roleLevel, email, phone, avatar, username, password } = req.body;
     const id = req.body.id || uuidv4();
+    const effectiveRoleLevel = roleLevel || 5;
 
     await pool.execute(
       `INSERT INTO employees (id, name, employee_code, department_id, position, role_level, email, phone, avatar)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, name, employeeCode, departmentId || null, position || null, roleLevel || 5, email || null, phone || null, avatar || null]
+      [id, name, employeeCode, departmentId || null, position || null, effectiveRoleLevel, email || null, phone || null, avatar || null]
     );
+
+    // Tự động tạo tài khoản đăng nhập cho nhân viên
+    // username = phần trước @ của email (nếu có), không có email thì dùng employeeCode
+    // password mặc định = 123456
+    const loginUsername = username || (email ? email.split('@')[0] : employeeCode);
+    const loginPassword = password || '123456';
+    const [existingUser] = await pool.execute('SELECT id FROM users WHERE username = ?', [loginUsername]);
+    if (existingUser.length === 0) {
+      const userId = uuidv4();
+      const passwordHash = await bcrypt.hash(loginPassword, 10);
+      // Lấy tên phòng ban để lưu vào users
+      let departmentName = null;
+      if (departmentId) {
+        const [deptRows] = await pool.execute('SELECT name FROM departments WHERE id = ?', [departmentId]);
+        if (deptRows.length > 0) departmentName = deptRows[0].name;
+      }
+      await pool.execute(
+        `INSERT INTO users (id, employee_id, username, password_hash, name, role, role_level, department, avatar)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, id, loginUsername, passwordHash, name, effectiveRoleLevel <= 1 ? 'admin' : 'user', effectiveRoleLevel, departmentName, avatar || null]
+      );
+    }
 
     await logAudit({
       action: 'create-employee',
       performedBy: req.user.name,
       targetEmployee: name,
-      details: `Tạo nhân viên ${name} (${employeeCode})`,
+      details: `Tạo nhân viên ${name} (${employeeCode}), tài khoản: ${loginUsername}`,
     });
 
     // Return with department name
@@ -152,7 +176,7 @@ router.post('/', authenticate, adminOnly, async (req, res) => {
       `SELECT e.*, d.name AS department FROM employees e LEFT JOIN departments d ON e.department_id = d.id WHERE e.id = ?`,
       [id]
     );
-    res.status(201).json(toCamelCase(emp[0]));
+    res.status(201).json({ ...toCamelCase(emp[0]), defaultUsername: loginUsername });
   } catch (err) {
     console.error('Create employee error:', err);
     if (err.errno === 1062) {

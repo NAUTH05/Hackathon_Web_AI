@@ -324,9 +324,6 @@ router.post('/check-in', authenticate, async (req, res) => {
     const today = vn.today;
     const now = vn.dateObj;
 
-    // Optional: admin-only time override for load testing / backdated correction.
-    // Regular employees never send this field → zero impact on normal usage.
-    // Non-admin requests that include this field have it silently ignored.
     let effectiveTime = vn;
     if (overrideTime && req.user.role === 'admin') {
       const p = String(overrideTime).split(':').map(Number);
@@ -382,7 +379,7 @@ router.post('/check-in', authenticate, async (req, res) => {
     }
 
     if (!shift) {
-      const dayOfWeek = new Date(today + 'T12:00:00+07:00').getDay(); // Vietnam day of week
+      const dayOfWeek = new Date(today + 'T12:00:00+07:00').getDay();
       const [shiftResult] = await pool.execute(
         `SELECT sa.shift_id AS sa_shift_id, s.id AS s_id, s.name, s.start_time, s.end_time,
                 s.allow_late_minutes, s.allow_early_leave_minutes, s.break_start_time, s.break_end_time
@@ -406,7 +403,6 @@ router.post('/check-in', authenticate, async (req, res) => {
       shiftId = shift.shift_id || shift.id;
       shiftName = shift.name;
 
-      // Calculate late minutes using Vietnam local time (timezone-safe)
       const startTime = shift.start_time || '';
       const timeParts = startTime.split(':').map(Number);
       const shiftH = timeParts[0];

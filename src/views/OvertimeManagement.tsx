@@ -1,7 +1,10 @@
 import { format } from "date-fns";
+import { AlertTriangle, CheckCircle2, Clock, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useAuth } from "../contexts/AuthContext";
+import EmployeeSearchDropdown from "../components/EmployeeSearchDropdown";
 import Pagination from "../components/Pagination";
+import { showToast } from "../components/Toast";
+import { useAuth } from "../contexts/AuthContext";
 import {
   addOTRequest,
   getEmployeesPaginated,
@@ -10,9 +13,6 @@ import {
   updateOTRequest,
 } from "../store/storage";
 import type { Employee, OTRequest, Shift } from "../types";
-import { X, Clock, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { showToast } from "../components/Toast";
-import EmployeeSearchDropdown from "../components/EmployeeSearchDropdown";
 
 export default function OvertimeManagement() {
   const { user, isAdmin } = useAuth();
@@ -37,8 +37,6 @@ export default function OvertimeManagement() {
     reason: "",
   });
 
-
-
   // Validate time: allow overnight (e.g. 17:00 → 07:00) — just check both are set
   function isTimeValid(): boolean {
     if (!form.startTime || !form.endTime) return false;
@@ -50,7 +48,7 @@ export default function OvertimeManagement() {
   function calcOTHours(): number {
     const [sh, sm] = form.startTime.split(":").map(Number);
     const [eh, em] = form.endTime.split(":").map(Number);
-    let mins = (eh * 60 + em) - (sh * 60 + sm);
+    let mins = eh * 60 + em - (sh * 60 + sm);
     if (mins <= 0) mins += 24 * 60; // overnight
     return Math.round((mins / 60) * 100) / 100;
   }
@@ -104,23 +102,28 @@ export default function OvertimeManagement() {
 
   async function handleSubmit() {
     if (!form.employeeId) {
-      showToast('warning', 'Thiếu thông tin', 'Vui lòng chọn nhân viên.');
+      showToast("warning", "Thiếu thông tin", "Vui lòng chọn nhân viên.");
       return;
     }
     if (!form.reason.trim()) {
-      showToast('warning', 'Thiếu thông tin', 'Vui lòng nhập lý do tăng ca.');
+      showToast("warning", "Thiếu thông tin", "Vui lòng nhập lý do tăng ca.");
       return;
     }
 
     const emp = employees.find((e) => e.id === form.employeeId);
     // For non-managers, employee might not be in the paginated list — use user info
-    const empName = emp?.name || (form.employeeId === user?.employeeId ? user?.name : null);
+    const empName =
+      emp?.name || (form.employeeId === user?.employeeId ? user?.name : null);
     if (!empName) {
-      showToast('warning', 'Lỗi', 'Không tìm thấy thông tin nhân viên.');
+      showToast("warning", "Lỗi", "Không tìm thấy thông tin nhân viên.");
       return;
     }
     if (!isTimeValid()) {
-      showToast('warning', 'Lỗi giờ', 'Giờ bắt đầu và kết thúc không được trùng nhau.');
+      showToast(
+        "warning",
+        "Lỗi giờ",
+        "Giờ bắt đầu và kết thúc không được trùng nhau.",
+      );
       return;
     }
 
@@ -142,8 +145,7 @@ export default function OvertimeManagement() {
     await loadRequests();
     setShowForm(false);
     setForm({
-      employeeId:
-        !canManage && user?.employeeId ? user.employeeId : "",
+      employeeId: !canManage && user?.employeeId ? user.employeeId : "",
       date: new Date().toISOString().split("T")[0],
       shiftId: "",
       startTime: "17:00",
@@ -160,6 +162,15 @@ export default function OvertimeManagement() {
 
   async function handleReject(req: OTRequest) {
     await updateOTRequest(req.id, { status: "rejected" });
+    await loadRequests();
+  }
+
+  async function handleApproveAll() {
+    const pending = requests.filter((r) => r.status === "pending");
+    if (pending.length === 0) return;
+    await Promise.all(
+      pending.map((r) => updateOTRequest(r.id, { status: "approved" })),
+    );
     await loadRequests();
   }
 
@@ -215,8 +226,6 @@ export default function OvertimeManagement() {
             </div>
 
             <div className="p-5 space-y-4">
-
-
               {/* 24h auto reject notice */}
               <div className="p-3 rounded-lg bg-amber-50 border border-amber-200">
                 <p className="text-xs text-amber-700 flex items-center gap-1">
@@ -270,7 +279,13 @@ export default function OvertimeManagement() {
                       const s = shifts.find((x) => x.id === shiftId);
                       if (s) {
                         // Auto-fill times: OT typically starts after shift ends
-                        setForm({ ...form, shiftId, startTime: s.endTime, endTime: s.endTime === s.startTime ? s.endTime : s.startTime });
+                        setForm({
+                          ...form,
+                          shiftId,
+                          startTime: s.endTime,
+                          endTime:
+                            s.endTime === s.startTime ? s.endTime : s.startTime,
+                        });
                       } else {
                         setForm({ ...form, shiftId });
                       }
@@ -330,7 +345,9 @@ export default function OvertimeManagement() {
                   <CheckCircle2 className="w-4 h-4" />
                   Tổng: {calcOTHours()}h OT
                   {form.startTime > form.endTime && (
-                    <span className="text-xs text-blue-500 ml-1">(qua đêm)</span>
+                    <span className="text-xs text-blue-500 ml-1">
+                      (qua đêm)
+                    </span>
                   )}
                 </div>
               )}
@@ -385,7 +402,7 @@ export default function OvertimeManagement() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 flex items-center justify-between">
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
@@ -397,6 +414,15 @@ export default function OvertimeManagement() {
           <option value="rejected">Từ chối</option>
           <option value="auto-rejected">Tự động từ chối</option>
         </select>
+        {canManage && requests.some((r) => r.status === "pending") && (
+          <button
+            onClick={handleApproveAll}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+          >
+            Duyệt tất cả (
+            {requests.filter((r) => r.status === "pending").length})
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

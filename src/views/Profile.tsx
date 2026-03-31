@@ -1,6 +1,15 @@
 "use client";
 
-import { Camera, Mail, Phone, Save, User } from "lucide-react";
+import {
+  Camera,
+  Eye,
+  EyeOff,
+  Lock,
+  Mail,
+  Phone,
+  Save,
+  User,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { authApi } from "../services/api";
@@ -35,6 +44,23 @@ export default function Profile() {
   const [phone, setPhone] = useState("");
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Change password state
+  const [pwForm, setPwForm] = useState({
+    oldPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [showPw, setShowPw] = useState({
+    old: false,
+    new: false,
+    confirm: false,
+  });
+  const [pwMessage, setPwMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [savingPw, setSavingPw] = useState(false);
 
   useEffect(() => {
     loadProfile();
@@ -90,7 +116,15 @@ export default function Profile() {
       setProfile(data);
       // Update auth context so sidebar avatar updates instantly
       updateUser({ avatar: data.avatar });
-      setMessage({ type: "success", text: "Cập nhật thành công!" });
+      // If username changed (email prefix), notify user
+      if (data.username !== profile?.username) {
+        setMessage({
+          type: "success",
+          text: `Cập nhật thành công! Tên đăng nhập mới: ${data.username}`,
+        });
+      } else {
+        setMessage({ type: "success", text: "Cập nhật thành công!" });
+      }
     } catch {
       setMessage({
         type: "error",
@@ -98,6 +132,43 @@ export default function Profile() {
       });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwMessage(null);
+    const { oldPassword, newPassword, confirmPassword } = pwForm;
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      setPwMessage({ type: "error", text: "Vui lòng nhập đầy đủ các trường." });
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPwMessage({
+        type: "error",
+        text: "Mật khẩu mới phải có ít nhất 6 ký tự.",
+      });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwMessage({
+        type: "error",
+        text: "Mật khẩu mới và xác nhận không khớp.",
+      });
+      return;
+    }
+    setSavingPw(true);
+    try {
+      await authApi.changePassword({ oldPassword, newPassword });
+      setPwMessage({ type: "success", text: "Đổi mật khẩu thành công!" });
+      setPwForm({ oldPassword: "", newPassword: "", confirmPassword: "" });
+      setShowPw({ old: false, new: false, confirm: false });
+    } catch (err: unknown) {
+      const msg =
+        (err as { message?: string })?.message || "Đổi mật khẩu thất bại.";
+      setPwMessage({ type: "error", text: msg });
+    } finally {
+      setSavingPw(false);
     }
   }
 
@@ -248,6 +319,155 @@ export default function Profile() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Change password section */}
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
+            <Lock className="w-4 h-4 text-gray-500" />
+            <h3 className="text-sm font-semibold text-gray-700">
+              Đổi mật khẩu
+            </h3>
+          </div>
+          <form onSubmit={handleChangePassword} className="p-6 space-y-4">
+            {/* Old password */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                Mật khẩu cũ
+              </label>
+              <div className="relative">
+                <input
+                  type={showPw.old ? "text" : "password"}
+                  value={pwForm.oldPassword}
+                  onChange={(e) =>
+                    setPwForm({ ...pwForm, oldPassword: e.target.value })
+                  }
+                  placeholder="Nhập mật khẩu cũ"
+                  className="w-full pr-10 pl-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw({ ...showPw, old: !showPw.old })}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  tabIndex={-1}
+                >
+                  {showPw.old ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* New password */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                Mật khẩu mới
+              </label>
+              <div className="relative">
+                <input
+                  type={showPw.new ? "text" : "password"}
+                  value={pwForm.newPassword}
+                  onChange={(e) =>
+                    setPwForm({ ...pwForm, newPassword: e.target.value })
+                  }
+                  placeholder="Nhập mật khẩu mới (ít nhất 6 ký tự)"
+                  className="w-full pr-10 pl-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw({ ...showPw, new: !showPw.new })}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  tabIndex={-1}
+                >
+                  {showPw.new ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Confirm new password */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">
+                Xác nhận mật khẩu mới
+              </label>
+              <div className="relative">
+                <input
+                  type={showPw.confirm ? "text" : "password"}
+                  value={pwForm.confirmPassword}
+                  onChange={(e) =>
+                    setPwForm({ ...pwForm, confirmPassword: e.target.value })
+                  }
+                  placeholder="Nhập lại mật khẩu mới"
+                  className={`w-full pr-10 pl-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent ${
+                    pwForm.confirmPassword &&
+                    pwForm.newPassword !== pwForm.confirmPassword
+                      ? "border-red-300 bg-red-50"
+                      : pwForm.confirmPassword &&
+                          pwForm.newPassword === pwForm.confirmPassword
+                        ? "border-green-300 bg-green-50"
+                        : "border-gray-200"
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowPw({ ...showPw, confirm: !showPw.confirm })
+                  }
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  tabIndex={-1}
+                >
+                  {showPw.confirm ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+              {pwForm.confirmPassword &&
+                pwForm.newPassword !== pwForm.confirmPassword && (
+                  <p className="text-xs text-red-500 mt-1">
+                    Mật khẩu không khớp
+                  </p>
+                )}
+              {pwForm.confirmPassword &&
+                pwForm.newPassword === pwForm.confirmPassword && (
+                  <p className="text-xs text-green-600 mt-1">Mật khẩu khớp</p>
+                )}
+            </div>
+
+            {/* Message */}
+            {pwMessage && (
+              <div
+                className={`text-sm px-4 py-2 rounded-lg ${
+                  pwMessage.type === "success"
+                    ? "bg-green-50 text-green-700"
+                    : "bg-red-50 text-red-700"
+                }`}
+              >
+                {pwMessage.text}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={savingPw}
+                className="flex items-center gap-2 px-5 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 transition-colors"
+              >
+                {savingPw ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Lock className="w-4 h-4" />
+                )}
+                Đổi mật khẩu
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>

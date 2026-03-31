@@ -1,20 +1,23 @@
 import {
   Calculator,
+  Clock,
   DollarSign,
   Edit2,
   FileSpreadsheet,
   Filter,
+  GripVertical,
   Lock,
   Plus,
   Save,
   Search,
   Settings,
+  Star,
   Trash2,
   Unlock,
   UserCheck,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Pagination from "../components/Pagination";
 import { showToast } from "../components/Toast";
 import { useAuth } from "../contexts/AuthContext";
@@ -22,8 +25,10 @@ import { buildApiUrl } from "../services/api";
 import type { SalaryCoefficient, SalaryPermission } from "../store/storage";
 import {
   addSalaryPreset,
+  adjustSalaryOt,
   assignSalaryPreset,
   calculateSalary,
+  deleteSalaryCoefficient,
   deleteSalaryPreset,
   getEmployeesPaginated,
   getSalaryAssignments,
@@ -36,6 +41,7 @@ import {
   searchUsersForRole,
   setSalaryPermission,
   unlockSalaryMonth,
+  updateSalaryCoefficient,
   updateSalaryPreset,
 } from "../store/storage";
 import type {
@@ -44,10 +50,12 @@ import type {
   SalaryPreset,
   SalaryRecord,
 } from "../types";
+import AttendanceScore from "./AttendanceScore";
 import ExportTemplateBuilder from "./ExportTemplateBuilder";
 
 type Tab =
   | "salary"
+  | "attendance"
   | "presets"
   | "assign"
   | "coefficients"
@@ -97,6 +105,18 @@ export default function SalaryManagement() {
   const [salaryLocked, setSalaryLocked] = useState(false);
   const [locking, setLocking] = useState(false);
   const [coefficients, setCoefficients] = useState<SalaryCoefficient[]>([]);
+  const [coeffEditMap, setCoeffEditMap] = useState<
+    Record<string, { multiplier: string; description: string }>
+  >({});
+  const [savingCoeff, setSavingCoeff] = useState<string | null>(null);
+  const [deletingCoeff, setDeletingCoeff] = useState<string | null>(null);
+  const [showAddCoeff, setShowAddCoeff] = useState(false);
+  const [addCoeffForm, setAddCoeffForm] = useState({
+    type: "",
+    multiplier: "1",
+    description: "",
+  });
+  const [savingNewCoeff, setSavingNewCoeff] = useState(false);
 
   // Benefits (Phụ cấp/BHXH/Khấu trừ) state
   type BenefitItem = {
@@ -189,6 +209,8 @@ export default function SalaryManagement() {
     name: "",
     description: "",
     baseSalary: 0,
+    hourlyRate: 0, // explicit hourly rate — if >0 overrides baseSalary÷(days×8)
+    workDaysPerMonth: 22, // standard work days used to derive daily/hourly rate
     allowances: 0,
     isDefault: false,
     salaryBasis: "hourly" as "hourly" | "daily" | "fixed",
@@ -199,6 +221,106 @@ export default function SalaryManagement() {
     includeDeductions: true,
     includeLatePenalty: true,
   });
+
+  // Drag-and-drop formula builder
+  type FormulaNode = {
+    uid: string;
+    blockId: string;
+    operator: "+" | "-" | "×" | "÷";
+  };
+  const FORMULA_BLOCKS = [
+    {
+      id: "working_hours",
+      label: "Giờ làm thực tế",
+      color: "blue",
+      desc: "Tổng giờ làm có check-out trong tháng",
+    },
+    {
+      id: "present_days",
+      label: "Ngày công (≥8h)",
+      color: "green",
+      desc: "Số ngày làm đủ 8 tiếng",
+    },
+    {
+      id: "hourly_rate",
+      label: "Lương 1 giờ",
+      color: "emerald",
+      desc: "= Lương CB ÷ (Ngày chuẩn × 8h)",
+    },
+    {
+      id: "daily_rate",
+      label: "Lương 1 ngày",
+      color: "teal",
+      desc: "= Lương CB ÷ Ngày chuẩn tháng",
+    },
+    {
+      id: "base_salary",
+      label: "Lương cơ bản (cố định)",
+      color: "purple",
+      desc: "Nhận đủ mỗi tháng",
+    },
+    {
+      id: "ot_hours",
+      label: "Giờ OT đã duyệt",
+      color: "orange",
+      desc: "Giờ OT được phê duyệt trong tháng",
+    },
+    {
+      id: "ot_multiplier",
+      label: "Hệ số OT",
+      color: "amber",
+      desc: "Hệ số nhân lương OT (×1.5, ×2…)",
+    },
+    {
+      id: "allowances",
+      label: "Phụ cấp (Preset)",
+      color: "sky",
+      desc: "Phụ cấp cố định theo preset",
+    },
+    {
+      id: "late_days",
+      label: "Số ngày trễ",
+      color: "red",
+      desc: "Số ngày đi muộn trong tháng",
+    },
+    {
+      id: "late_penalty_rate",
+      label: "Tiền phạt/ngày trễ",
+      color: "rose",
+      desc: "Số tiền phạt mỗi ngày đi trễ",
+    },
+    {
+      id: "deductions",
+      label: "Trừ vi phạm",
+      color: "orange",
+      desc: "Khấu trừ từ quản lý phạt",
+    },
+  ] as const;
+  type BlockId = (typeof FORMULA_BLOCKS)[number]["id"];
+  const blockColorMap: Record<string, string> = {
+    blue: "bg-blue-100 text-blue-800 border-blue-200",
+    green: "bg-green-100 text-green-800 border-green-200",
+    emerald: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    teal: "bg-teal-100 text-teal-800 border-teal-200",
+    purple: "bg-purple-100 text-purple-800 border-purple-200",
+    orange: "bg-orange-100 text-orange-800 border-orange-200",
+    amber: "bg-amber-100 text-amber-800 border-amber-200",
+    sky: "bg-sky-100 text-sky-800 border-sky-200",
+    red: "bg-red-100 text-red-800 border-red-200",
+    rose: "bg-rose-100 text-rose-800 border-rose-200",
+  };
+  const [formulaNodes, setFormulaNodes] = useState<FormulaNode[]>([]);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const dragBlockRef = useRef<BlockId | null>(null);
+
+  // OT adjustment popup
+  const [otPopupRecord, setOtPopupRecord] = useState<SalaryRecord | null>(null);
+  const [otPopupForm, setOtPopupForm] = useState({
+    otHoursOverride: 0,
+    bonusDesc: "1 giờ OT = 1.5 giờ thưởng",
+    note: "",
+  });
+  const [savingOt, setSavingOt] = useState(false);
 
   useEffect(() => {
     reloadPresets();
@@ -311,9 +433,82 @@ export default function SalaryManagement() {
 
   async function loadCoefficients() {
     try {
-      setCoefficients(await getSalaryCoefficients());
+      const list = await getSalaryCoefficients();
+      setCoefficients(list);
+      // Initialize edit map from loaded data
+      const em: Record<string, { multiplier: string; description: string }> =
+        {};
+      list.forEach((c) => {
+        em[c.type] = {
+          multiplier: String(c.multiplier),
+          description: c.description || "",
+        };
+      });
+      setCoeffEditMap(em);
     } catch (err) {
       console.error("Load coefficients error:", err);
+    }
+  }
+
+  async function handleSaveCoefficient(type: string) {
+    const edit = coeffEditMap[type];
+    if (!edit) return;
+    const val = parseFloat(edit.multiplier);
+    if (isNaN(val) || val <= 0) return;
+    setSavingCoeff(type);
+    try {
+      await updateSalaryCoefficient(type, {
+        multiplier: val,
+        description: edit.description,
+      });
+      await loadCoefficients();
+      showToast("success", "Đã lưu", `Hệ số ${type} đã cập nhật`);
+    } catch (err) {
+      showToast("error", "Lỗi", "Không thể lưu hệ số");
+      console.error(err);
+    } finally {
+      setSavingCoeff(null);
+    }
+  }
+
+  async function handleDeleteCoefficient(type: string) {
+    try {
+      await deleteSalaryCoefficient(type);
+      await loadCoefficients();
+      setDeletingCoeff(null);
+      showToast("success", "Đã xóa", `Hệ số "${type}" đã bị xóa`);
+    } catch (err) {
+      showToast("error", "Lỗi", "Không thể xóa hệ số");
+      console.error(err);
+    }
+  }
+
+  async function handleAddCoefficient() {
+    const typeKey = addCoeffForm.type.trim().replace(/\s+/g, "_").toLowerCase();
+    if (!typeKey) {
+      showToast("error", "Thiếu thông tin", "Vui lòng nhập tên loại hệ số");
+      return;
+    }
+    const val = parseFloat(addCoeffForm.multiplier);
+    if (isNaN(val) || val <= 0) {
+      showToast("error", "Hệ số không hợp lệ", "Hệ số phải là số dương");
+      return;
+    }
+    setSavingNewCoeff(true);
+    try {
+      await updateSalaryCoefficient(typeKey, {
+        multiplier: val,
+        description: addCoeffForm.description,
+      });
+      await loadCoefficients();
+      setShowAddCoeff(false);
+      setAddCoeffForm({ type: "", multiplier: "1", description: "" });
+      showToast("success", "Đã thêm", `Hệ số "${typeKey}" đã được thêm`);
+    } catch (err) {
+      showToast("error", "Lỗi", "Không thể thêm hệ số");
+      console.error(err);
+    } finally {
+      setSavingNewCoeff(false);
     }
   }
 
@@ -405,6 +600,8 @@ export default function SalaryManagement() {
       name: "",
       description: "",
       baseSalary: 0,
+      hourlyRate: 0,
+      workDaysPerMonth: 22,
       allowances: 0,
       isDefault: false,
       salaryBasis: "hourly",
@@ -416,6 +613,7 @@ export default function SalaryManagement() {
       includeLatePenalty: true,
     });
     setEditingPresetId(null);
+    setFormulaNodes([]);
     setShowPresetForm(true);
   }
 
@@ -425,6 +623,8 @@ export default function SalaryManagement() {
       name: p.name,
       description: p.description,
       baseSalary: p.baseSalary,
+      hourlyRate: cfg.hourlyRate ?? 0,
+      workDaysPerMonth: cfg.workDaysPerMonth ?? 22,
       allowances: p.allowances,
       isDefault: p.isDefault,
       salaryBasis: cfg.salaryBasis,
@@ -436,6 +636,15 @@ export default function SalaryManagement() {
       includeLatePenalty: cfg.includeLatePenalty,
     });
     setEditingPresetId(p.id);
+    try {
+      const parsed =
+        typeof p.customFormula === "string"
+          ? JSON.parse(p.customFormula)
+          : p.customFormula;
+      setFormulaNodes((parsed?.formulaNodes ?? []) as FormulaNode[]);
+    } catch {
+      setFormulaNodes([]);
+    }
     setShowPresetForm(true);
   }
 
@@ -443,12 +652,15 @@ export default function SalaryManagement() {
     if (!presetForm.name || presetForm.baseSalary <= 0) return;
     const config = JSON.stringify({
       salaryBasis: presetForm.salaryBasis,
+      hourlyRate: presetForm.hourlyRate > 0 ? presetForm.hourlyRate : undefined,
+      workDaysPerMonth: presetForm.workDaysPerMonth || 22,
       otMultiplier: presetForm.otMultiplier,
       latePenaltyPerDay: presetForm.latePenaltyPerDay,
       includeOT: presetForm.includeOT,
       includeAllowances: presetForm.includeAllowances,
       includeDeductions: presetForm.includeDeductions,
       includeLatePenalty: presetForm.includeLatePenalty,
+      formulaNodes: formulaNodes,
     });
     const payload = {
       name: presetForm.name,
@@ -487,6 +699,31 @@ export default function SalaryManagement() {
     await reloadPresets();
   }
 
+  function openOtPopup(record: SalaryRecord) {
+    setOtPopupRecord(record);
+    setOtPopupForm({
+      otHoursOverride: record.otHours ?? 0,
+      bonusDesc: "1 giờ OT = 1.5 giờ thưởng",
+      note: "",
+    });
+  }
+
+  async function handleSaveOtAdjust() {
+    if (!otPopupRecord) return;
+    setSavingOt(true);
+    try {
+      await adjustSalaryOt(otPopupRecord.id, {
+        otHoursOverride: otPopupForm.otHoursOverride,
+        bonusDesc: otPopupForm.bonusDesc,
+        note: otPopupForm.note,
+      });
+      setOtPopupRecord(null);
+      await loadSalaryRecords();
+    } finally {
+      setSavingOt(false);
+    }
+  }
+
   function fmt(n: number) {
     return n.toLocaleString("vi-VN") + "đ";
   }
@@ -505,6 +742,10 @@ export default function SalaryManagement() {
         includeAllowances: c.includeAllowances !== false,
         includeDeductions: c.includeDeductions !== false,
         includeLatePenalty: c.includeLatePenalty !== false,
+        hourlyRate: c.hourlyRate ? parseFloat(c.hourlyRate) : 0,
+        workDaysPerMonth: c.workDaysPerMonth
+          ? parseInt(c.workDaysPerMonth)
+          : 22,
       };
     } catch {
       return {
@@ -515,6 +756,8 @@ export default function SalaryManagement() {
         includeAllowances: true,
         includeDeductions: true,
         includeLatePenalty: true,
+        hourlyRate: 0,
+        workDaysPerMonth: 22,
       };
     }
   }
@@ -554,6 +797,12 @@ export default function SalaryManagement() {
       key: "salary",
       label: "Bảng lương",
       icon: <DollarSign className="w-4 h-4" />,
+    },
+    {
+      key: "attendance",
+      label: "Điểm chuyên cần",
+      icon: <Star className="w-4 h-4" />,
+      requireElevated: true,
     },
     {
       key: "presets",
@@ -867,6 +1116,12 @@ export default function SalaryManagement() {
                       >
                         Lương CB {sortIcon("base_salary")}
                       </th>
+                      <th className="text-center px-3 py-3 font-semibold text-blue-600 whitespace-nowrap">
+                        <span className="flex items-center justify-center gap-1">
+                          <Clock className="w-3.5 h-3.5" />
+                          Tổng giờ làm
+                        </span>
+                      </th>
                       <th
                         className="text-center px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
                         onClick={() => toggleSort("present_days")}
@@ -878,6 +1133,11 @@ export default function SalaryManagement() {
                         onClick={() => toggleSort("ot_hours")}
                       >
                         OT {sortIcon("ot_hours")}
+                        {(isAdmin || isSalaryManager) && (
+                          <span className="block text-[10px] text-blue-400 font-normal">
+                            Click điều chỉnh
+                          </span>
+                        )}
                       </th>
                       <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
                         Phụ cấp
@@ -939,24 +1199,43 @@ export default function SalaryManagement() {
                           {fmt(r.baseSalary)}
                         </td>
                         <td className="px-3 py-3 text-center">
-                          <span
-                            className={`font-medium ${r.presentDays > 0 ? "text-gray-700" : "text-red-400"}`}
-                          >
-                            {r.presentDays}
-                          </span>
-                          <span className="text-gray-400">
-                            /{r.totalWorkDays}
+                          <span className="font-semibold text-blue-700">
+                            {(r.totalWorkingHours ?? 0).toFixed(1)}h
                           </span>
                         </td>
-                        <td className="px-3 py-3 text-right">
+                        <td className="px-3 py-3 text-center">
                           <div>
+                            <span
+                              className={`font-bold text-sm ${r.presentDays > 0 ? "text-gray-800" : "text-red-400"}`}
+                            >
+                              {r.presentDays}
+                            </span>
+                            <span className="text-gray-400 text-xs">
+                              /{r.totalWorkDays}
+                            </span>
+                            <div className="text-[10px] text-gray-400 mt-0.5">
+                              {(r.totalWorkingHours ?? 0) > 0
+                                ? `${(r.totalWorkingHours ?? 0).toFixed(0)}h ÷ 8`
+                                : "chưa có giờ"}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          <button
+                            onClick={() =>
+                              isAdmin || isSalaryManager
+                                ? openOtPopup(r)
+                                : undefined
+                            }
+                            className={`group text-right w-full ${isAdmin || isSalaryManager ? "cursor-pointer hover:bg-blue-50 rounded-lg p-1 transition-colors" : ""}`}
+                          >
                             <span className="text-gray-700">{r.otHours}h</span>
                             {r.otPay > 0 && (
                               <p className="text-[11px] text-blue-500">
                                 {fmt(r.otPay)}
                               </p>
                             )}
-                          </div>
+                          </button>
                         </td>
                         <td className="px-3 py-3 text-right text-blue-600">
                           {r.allowances > 0 ? (
@@ -993,7 +1272,7 @@ export default function SalaryManagement() {
                       <tfoot>
                         <tr className="bg-emerald-50 border-t-2 border-emerald-200">
                           <td
-                            colSpan={9}
+                            colSpan={10}
                             className="px-3 py-3 font-semibold text-emerald-800"
                           >
                             Tổng cộng ({salaryTotal} NV)
@@ -1019,6 +1298,152 @@ export default function SalaryManagement() {
             </div>
           )}
         </div>
+      )}
+
+      {/* =================== OT Adjustment Popup =================== */}
+      {otPopupRecord && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 mx-4">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">
+                  Điều chỉnh giờ OT / Lễ
+                </h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {otPopupRecord.employeeName} — Tháng {otPopupRecord.month}
+                </p>
+              </div>
+              <button
+                onClick={() => setOtPopupRecord(null)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 bg-gray-50 rounded-xl p-4">
+                <div>
+                  <p className="text-xs text-gray-500">Giờ OT đã duyệt (gốc)</p>
+                  <p className="text-lg font-bold text-gray-800">
+                    {otPopupRecord.otHours ?? 0}h
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Lương OT hiện tại</p>
+                  <p className="text-lg font-bold text-blue-700">
+                    {fmt(otPopupRecord.otPay ?? 0)}
+                  </p>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Giờ OT hiệu lực (sau điều chỉnh)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={otPopupForm.otHoursOverride}
+                    onChange={(e) =>
+                      setOtPopupForm({
+                        ...otPopupForm,
+                        otHoursOverride: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    className="w-28 border border-gray-200 rounded-lg px-3 py-2 text-sm text-center focus:ring-2 focus:ring-blue-500 outline-none font-bold"
+                  />
+                  <span className="text-sm text-gray-500">giờ</span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Ví dụ: NV làm 4h OT, tỉ lệ 1h OT = 1.5h → nhập 6h
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-2">
+                  Công thức thưởng nhanh:
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  {[
+                    { label: "×1", ratio: 1 },
+                    { label: "×1.5 (OT thường)", ratio: 1.5 },
+                    { label: "×2 (OT lễ)", ratio: 2 },
+                    { label: "×3 (Lễ lớn)", ratio: 3 },
+                  ].map((q) => (
+                    <button
+                      key={q.label}
+                      type="button"
+                      onClick={() =>
+                        setOtPopupForm({
+                          ...otPopupForm,
+                          otHoursOverride: parseFloat(
+                            ((otPopupRecord.otHours ?? 0) * q.ratio).toFixed(1),
+                          ),
+                          bonusDesc: `1 giờ OT = ${q.ratio} giờ thưởng`,
+                        })
+                      }
+                      className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 bg-white text-gray-700 hover:border-blue-400 hover:text-blue-700 transition-all"
+                    >
+                      {q.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Mô tả điều chỉnh
+                </label>
+                <input
+                  type="text"
+                  value={otPopupForm.bonusDesc}
+                  onChange={(e) =>
+                    setOtPopupForm({
+                      ...otPopupForm,
+                      bonusDesc: e.target.value,
+                    })
+                  }
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="VD: 1 giờ OT ngày lễ = 2 giờ thưởng"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Ghi chú
+                </label>
+                <input
+                  type="text"
+                  value={otPopupForm.note}
+                  onChange={(e) =>
+                    setOtPopupForm({ ...otPopupForm, note: e.target.value })
+                  }
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="Ghi chú thêm..."
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setOtPopupRecord(null)}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveOtAdjust}
+                disabled={savingOt}
+                className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                {savingOt ? "Đang lưu..." : "Lưu điều chỉnh"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================== Attendance Score Tab =================== */}
+      {tab === "attendance" && (isAdmin || isSalaryManager) && (
+        <AttendanceScore />
       )}
 
       {/* =================== Presets Tab =================== */}
@@ -1142,14 +1567,21 @@ export default function SalaryManagement() {
             })}
           </div>
 
-          {/* Preset Form Modal */}
+          {/* Preset Form Modal - Drag & Drop Builder */}
           {showPresetForm && (
-            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 mx-4 max-h-[90vh] overflow-y-auto">
-                <div className="flex items-center justify-between mb-5">
-                  <h2 className="text-lg font-bold text-gray-900">
-                    {editingPresetId ? "Sửa preset" : "Thêm preset lương"}
-                  </h2>
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[92vh] flex flex-col">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">
+                      {editingPresetId
+                        ? "Sửa preset lương"
+                        : "Tạo preset lương mới"}
+                    </h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Kéo thả các khối dữ liệu để xây dựng công thức tính lương
+                    </p>
+                  </div>
                   <button
                     onClick={() => setShowPresetForm(false)}
                     className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"
@@ -1157,42 +1589,25 @@ export default function SalaryManagement() {
                     <X className="w-5 h-5" />
                   </button>
                 </div>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">
-                      Tên preset *
-                    </label>
-                    <input
-                      value={presetForm.name}
-                      onChange={(e) =>
-                        setPresetForm({ ...presetForm, name: e.target.value })
-                      }
-                      className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
-                      placeholder="VD: Nhân viên cấp cao"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">
-                      Mô tả
-                    </label>
-                    <input
-                      value={presetForm.description}
-                      onChange={(e) =>
-                        setPresetForm({
-                          ...presetForm,
-                          description: e.target.value,
-                        })
-                      }
-                      className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
-                    />
-                  </div>
-
+                <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
+                  {/* Row 1: Name + baseSalary */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-sm font-medium text-gray-700">
-                        Lương cơ bản (VNĐ) *
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Tên preset *
+                      </label>
+                      <input
+                        value={presetForm.name}
+                        onChange={(e) =>
+                          setPresetForm({ ...presetForm, name: e.target.value })
+                        }
+                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                        placeholder="VD: Nhân viên fulltime"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Lương cơ bản / tháng (VNĐ) *
                       </label>
                       <input
                         type="number"
@@ -1203,12 +1618,79 @@ export default function SalaryManagement() {
                             baseSalary: Number(e.target.value),
                           })
                         }
-                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                        placeholder="VD: 10000000"
+                      />
+                    </div>
+                  </div>
+                  {/* Row 2: hourlyRate + workDaysPerMonth */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Lương 1 giờ (VNĐ/h)
+                      </label>
+                      <input
+                        type="number"
+                        value={presetForm.hourlyRate || ""}
+                        onChange={(e) =>
+                          setPresetForm({
+                            ...presetForm,
+                            hourlyRate: Number(e.target.value),
+                          })
+                        }
+                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        placeholder={
+                          presetForm.baseSalary > 0
+                            ? `Tự động: ${Math.round(presetForm.baseSalary / ((presetForm.workDaysPerMonth || 22) * 8)).toLocaleString()}đ/h`
+                            : "VD: 25000"
+                        }
+                      />
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        Để trống → tự tính từ lương tháng ÷ (
+                        {presetForm.workDaysPerMonth || 22} ngày × 8h)
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Ngày công chuẩn / tháng
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={31}
+                        value={presetForm.workDaysPerMonth || ""}
+                        onChange={(e) =>
+                          setPresetForm({
+                            ...presetForm,
+                            workDaysPerMonth: Number(e.target.value) || 22,
+                          })
+                        }
+                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                        placeholder="22"
+                      />
+                    </div>
+                  </div>
+                  {/* Row 3: description + allowances */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Mô tả
+                      </label>
+                      <input
+                        value={presetForm.description}
+                        onChange={(e) =>
+                          setPresetForm({
+                            ...presetForm,
+                            description: e.target.value,
+                          })
+                        }
+                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                        placeholder="Mô tả ngắn cho preset này"
                       />
                     </div>
                     <div>
-                      <label className="text-sm font-medium text-gray-700">
-                        Phụ cấp (VNĐ)
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Phụ cấp cố định (VNĐ)
                       </label>
                       <input
                         type="number"
@@ -1219,315 +1701,314 @@ export default function SalaryManagement() {
                             allowances: Number(e.target.value),
                           })
                         }
-                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                        className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                        placeholder="0"
                       />
                     </div>
                   </div>
 
-                  {/* === CÁCH TÍNH LƯƠNG === */}
-                  <div className="border-t pt-4">
-                    <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
-                      <Calculator className="w-4 h-4 text-emerald-600" />
-                      Cách tính lương
-                    </h3>
-                    <div className="space-y-2">
-                      {[
-                        {
-                          value: "hourly" as const,
-                          label: "Theo giờ làm thực tế",
-                          desc: "Lương = Số giờ làm × (Lương CB ÷ tổng giờ chuẩn tháng)",
-                          rec: true,
-                        },
-                        {
-                          value: "daily" as const,
-                          label: "Theo ngày công",
-                          desc: "Lương = Số ngày đi làm × (Lương CB ÷ số ngày chuẩn tháng)",
-                          rec: false,
-                        },
-                        {
-                          value: "fixed" as const,
-                          label: "Lương cố định hàng tháng",
-                          desc: "Nhận đủ lương cơ bản mỗi tháng, không phụ thuộc ngày công",
-                          rec: false,
-                        },
-                      ].map((opt) => (
-                        <label
-                          key={opt.value}
-                          className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                            presetForm.salaryBasis === opt.value
-                              ? "border-emerald-400 bg-emerald-50 shadow-sm"
-                              : "border-gray-200 hover:border-gray-300"
-                          }`}
+                  {/* DRAG-DROP FORMULA BUILDER */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide flex items-center gap-1.5">
+                        <GripVertical className="w-3.5 h-3.5" /> Xây dựng công
+                        thức tính lương
+                      </h3>
+                      {formulaNodes.length > 0 && (
+                        <button
+                          onClick={() => setFormulaNodes([])}
+                          className="text-xs text-red-500 hover:underline"
                         >
-                          <input
-                            type="radio"
-                            name="salaryBasis"
-                            value={opt.value}
-                            checked={presetForm.salaryBasis === opt.value}
-                            onChange={(e) =>
-                              setPresetForm({
-                                ...presetForm,
-                                salaryBasis: e.target.value as
-                                  | "hourly"
-                                  | "daily"
-                                  | "fixed",
-                              })
-                            }
-                            className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
-                          />
-                          <div>
-                            <span className="text-sm font-medium text-gray-900">
-                              {opt.label}
-                            </span>
-                            {opt.rec && (
-                              <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
-                                Khuyến nghị
-                              </span>
-                            )}
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              {opt.desc}
-                            </p>
-                          </div>
-                        </label>
-                      ))}
+                          Xóa tất cả
+                        </button>
+                      )}
                     </div>
-                  </div>
-
-                  {/* === CÁC KHOẢN CỘNG THÊM === */}
-                  <div className="border-t pt-4">
-                    <h3 className="text-sm font-bold text-gray-800 mb-3">
-                      <span className="text-blue-600">＋</span> Các khoản cộng
-                      thêm
-                    </h3>
-                    <div className="space-y-3">
-                      <div
-                        className={`p-3 rounded-xl border transition-all ${presetForm.includeOT ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-gray-50"}`}
-                      >
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={presetForm.includeOT}
-                            onChange={(e) =>
-                              setPresetForm({
-                                ...presetForm,
-                                includeOT: e.target.checked,
-                              })
-                            }
-                            className="rounded text-blue-600 focus:ring-blue-500"
-                          />
-                          <div>
-                            <span className="text-sm font-medium text-gray-900">
-                              Tính lương tăng ca (OT)
-                            </span>
-                            <p className="text-xs text-gray-500">
-                              Cộng thêm tiền khi làm ngoài giờ
-                            </p>
-                          </div>
-                        </label>
-                        {presetForm.includeOT && (
-                          <div className="mt-3 ml-8">
-                            <label className="text-xs font-medium text-gray-600">
-                              Hệ số tăng ca (× lương/giờ)
-                            </label>
-                            <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              {[1, 1.5, 2, 3].map((v) => (
-                                <button
-                                  key={v}
-                                  type="button"
-                                  onClick={() =>
-                                    setPresetForm({
-                                      ...presetForm,
-                                      otMultiplier: v,
-                                    })
-                                  }
-                                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                                    presetForm.otMultiplier === v
-                                      ? "bg-blue-600 text-white shadow-sm"
-                                      : "bg-white border border-gray-200 text-gray-700 hover:border-blue-300"
-                                  }`}
-                                >
-                                  ×{v}
-                                </button>
-                              ))}
-                              <input
-                                type="number"
-                                step="0.1"
-                                min="0.1"
-                                value={presetForm.otMultiplier}
-                                onChange={(e) =>
-                                  setPresetForm({
-                                    ...presetForm,
-                                    otMultiplier: Number(e.target.value) || 1.5,
-                                  })
-                                }
-                                className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div
-                        className={`p-3 rounded-xl border transition-all ${presetForm.includeAllowances ? "border-blue-200 bg-blue-50" : "border-gray-200 bg-gray-50"}`}
-                      >
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={presetForm.includeAllowances}
-                            onChange={(e) =>
-                              setPresetForm({
-                                ...presetForm,
-                                includeAllowances: e.target.checked,
-                              })
-                            }
-                            className="rounded text-blue-600 focus:ring-blue-500"
-                          />
-                          <div>
-                            <span className="text-sm font-medium text-gray-900">
-                              Cộng phụ cấp hàng tháng
-                            </span>
-                            <p className="text-xs text-gray-500">
-                              Cộng thêm{" "}
-                              {presetForm.allowances > 0
-                                ? fmt(presetForm.allowances)
-                                : "(chưa nhập số tiền ở trên)"}{" "}
-                              mỗi tháng
-                            </p>
-                          </div>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* === CÁC KHOẢN TRỪ === */}
-                  <div className="border-t pt-4">
-                    <h3 className="text-sm font-bold text-gray-800 mb-3">
-                      <span className="text-red-500">－</span> Các khoản trừ
-                    </h3>
-                    <div className="space-y-3">
-                      <div
-                        className={`p-3 rounded-xl border transition-all ${presetForm.includeLatePenalty ? "border-red-200 bg-red-50" : "border-gray-200 bg-gray-50"}`}
-                      >
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={presetForm.includeLatePenalty}
-                            onChange={(e) =>
-                              setPresetForm({
-                                ...presetForm,
-                                includeLatePenalty: e.target.checked,
-                              })
-                            }
-                            className="rounded text-red-600 focus:ring-red-500"
-                          />
-                          <div>
-                            <span className="text-sm font-medium text-gray-900">
-                              Trừ phạt đi trễ
-                            </span>
-                            <p className="text-xs text-gray-500">
-                              Mỗi ngày đi trễ bị trừ tiền
-                            </p>
-                          </div>
-                        </label>
-                        {presetForm.includeLatePenalty && (
-                          <div className="mt-3 ml-8">
-                            <label className="text-xs font-medium text-gray-600">
-                              Số tiền phạt mỗi ngày trễ
-                            </label>
-                            <div className="flex items-center gap-2 mt-1 flex-wrap">
-                              {[20000, 50000, 100000, 200000].map((v) => (
-                                <button
-                                  key={v}
-                                  type="button"
-                                  onClick={() =>
-                                    setPresetForm({
-                                      ...presetForm,
-                                      latePenaltyPerDay: v,
-                                    })
-                                  }
-                                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                                    presetForm.latePenaltyPerDay === v
-                                      ? "bg-red-600 text-white shadow-sm"
-                                      : "bg-white border border-gray-200 text-gray-700 hover:border-red-300"
-                                  }`}
-                                >
-                                  {v.toLocaleString("vi-VN")}đ
-                                </button>
-                              ))}
-                              <input
-                                type="number"
-                                value={presetForm.latePenaltyPerDay}
-                                onChange={(e) =>
-                                  setPresetForm({
-                                    ...presetForm,
-                                    latePenaltyPerDay:
-                                      Number(e.target.value) || 0,
-                                  })
-                                }
-                                className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none"
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div
-                        className={`p-3 rounded-xl border transition-all ${presetForm.includeDeductions ? "border-red-200 bg-red-50" : "border-gray-200 bg-gray-50"}`}
-                      >
-                        <label className="flex items-center gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={presetForm.includeDeductions}
-                            onChange={(e) =>
-                              setPresetForm({
-                                ...presetForm,
-                                includeDeductions: e.target.checked,
-                              })
-                            }
-                            className="rounded text-red-600 focus:ring-red-500"
-                          />
-                          <div>
-                            <span className="text-sm font-medium text-gray-900">
-                              Trừ khấu trừ / vi phạm
-                            </span>
-                            <p className="text-xs text-gray-500">
-                              Trừ các khoản phạt vi phạm nội quy từ mục Quản lý
-                              phạt
-                            </p>
-                          </div>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* === XEM TRƯỚC CÔNG THỨC === */}
-                  <div className="border-t pt-4">
-                    <h3 className="text-sm font-bold text-gray-800 mb-2 flex items-center gap-2">
-                      <Calculator className="w-4 h-4 text-purple-600" />
-                      Xem trước công thức
-                    </h3>
-                    <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-xl p-4 border border-purple-100">
-                      <p className="text-sm font-bold text-purple-800 mb-2">
-                        Lương ròng =
+                    <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 mb-3">
+                      <p className="text-[11px] text-gray-500 mb-2 font-medium">
+                        Kho khối dữ liệu — kéo vào công thức bên dưới:
                       </p>
-                      <div className="space-y-1 text-sm ml-4">
-                        {getFormulaPreview().map((line, i) => (
-                          <p
-                            key={i}
-                            className={`font-medium ${
-                              line.startsWith("+")
-                                ? "text-blue-700"
-                                : line.startsWith("-")
-                                  ? "text-red-600"
-                                  : "text-gray-800"
-                            }`}
+                      <div className="flex flex-wrap gap-2">
+                        {FORMULA_BLOCKS.map((blk) => (
+                          <div
+                            key={blk.id}
+                            draggable
+                            onDragStart={() => {
+                              dragBlockRef.current = blk.id;
+                            }}
+                            title={blk.desc}
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-grab active:cursor-grabbing select-none hover:shadow-sm transition-all ${blockColorMap[blk.color]}`}
                           >
-                            {line}
-                          </p>
+                            <GripVertical className="w-3 h-3 opacity-40" />
+                            {blk.label}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setDragOverIndex(formulaNodes.length);
+                      }}
+                      onDragLeave={() => setDragOverIndex(null)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const blockId = dragBlockRef.current;
+                        if (!blockId) return;
+                        setFormulaNodes((prev) => [
+                          ...prev,
+                          {
+                            uid: `${blockId}-${Date.now()}`,
+                            blockId,
+                            operator: "+" as const,
+                          },
+                        ]);
+                        setDragOverIndex(null);
+                        dragBlockRef.current = null;
+                      }}
+                      className={`min-h-20 rounded-xl border-2 border-dashed p-3 transition-all ${dragOverIndex !== null ? "border-emerald-400 bg-emerald-50" : "border-gray-200 bg-gray-50"}`}
+                    >
+                      {formulaNodes.length === 0 ? (
+                        <div className="flex items-center justify-center h-16 text-sm text-gray-400">
+                          Kéo khối dữ liệu vào đây để xây công thức...
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {formulaNodes.map((node, idx) => {
+                            const blk = FORMULA_BLOCKS.find(
+                              (b) => b.id === node.blockId,
+                            );
+                            return (
+                              <React.Fragment key={node.uid}>
+                                {idx > 0 && (
+                                  <select
+                                    value={node.operator}
+                                    onChange={(e) => {
+                                      const op = e.target
+                                        .value as FormulaNode["operator"];
+                                      setFormulaNodes((prev) =>
+                                        prev.map((n, i) =>
+                                          i === idx
+                                            ? { ...n, operator: op }
+                                            : n,
+                                        ),
+                                      );
+                                    }}
+                                    className="w-12 text-center text-sm font-bold text-gray-700 border border-gray-300 rounded-lg py-1 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                                  >
+                                    <option value="+">+</option>
+                                    <option value="-">−</option>
+                                    <option value="×">×</option>
+                                    <option value="÷">÷</option>
+                                  </select>
+                                )}
+                                <div
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium ${blk ? blockColorMap[blk.color] : "bg-gray-100 text-gray-700 border-gray-200"}`}
+                                >
+                                  <span>{blk?.label ?? node.blockId}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setFormulaNodes((prev) =>
+                                        prev.filter((_, i) => i !== idx),
+                                      )
+                                    }
+                                    className="ml-1 text-current opacity-50 hover:opacity-100"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-2">
+                      <p className="text-[11px] text-gray-500 font-medium mb-1.5">
+                        Mẫu công thức nhanh:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          {
+                            label: "Theo giờ + OT",
+                            nodes: [
+                              {
+                                uid: "wh-1",
+                                blockId: "working_hours",
+                                operator: "+" as const,
+                              },
+                              {
+                                uid: "hr-1",
+                                blockId: "hourly_rate",
+                                operator: "×" as const,
+                              },
+                              {
+                                uid: "oth-1",
+                                blockId: "ot_hours",
+                                operator: "+" as const,
+                              },
+                              {
+                                uid: "otm-1",
+                                blockId: "ot_multiplier",
+                                operator: "×" as const,
+                              },
+                              {
+                                uid: "hr-2",
+                                blockId: "hourly_rate",
+                                operator: "×" as const,
+                              },
+                            ],
+                          },
+                          {
+                            label: "Theo ngày công",
+                            nodes: [
+                              {
+                                uid: "pd-1",
+                                blockId: "present_days",
+                                operator: "+" as const,
+                              },
+                              {
+                                uid: "dr-1",
+                                blockId: "daily_rate",
+                                operator: "×" as const,
+                              },
+                              {
+                                uid: "al-1",
+                                blockId: "allowances",
+                                operator: "+" as const,
+                              },
+                            ],
+                          },
+                          {
+                            label: "Lương cố định + phụ cấp",
+                            nodes: [
+                              {
+                                uid: "bs-1",
+                                blockId: "base_salary",
+                                operator: "+" as const,
+                              },
+                              {
+                                uid: "al-2",
+                                blockId: "allowances",
+                                operator: "+" as const,
+                              },
+                              {
+                                uid: "ded-1",
+                                blockId: "deductions",
+                                operator: "-" as const,
+                              },
+                            ],
+                          },
+                        ].map((tpl) => (
+                          <button
+                            key={tpl.label}
+                            type="button"
+                            onClick={() => setFormulaNodes(tpl.nodes)}
+                            className="px-2.5 py-1 text-xs rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all"
+                          >
+                            {tpl.label}
+                          </button>
                         ))}
                       </div>
                     </div>
                   </div>
+
+                  {/* PARAMS */}
+                  <div className="border-t pt-4 grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Hệ số OT
+                      </label>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {[1, 1.5, 2, 3].map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() =>
+                              setPresetForm({ ...presetForm, otMultiplier: v })
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${presetForm.otMultiplier === v ? "bg-blue-600 text-white" : "bg-white border border-gray-200 text-gray-700 hover:border-blue-300"}`}
+                          >
+                            ×{v}
+                          </button>
+                        ))}
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.1"
+                          value={presetForm.otMultiplier}
+                          onChange={(e) =>
+                            setPresetForm({
+                              ...presetForm,
+                              otMultiplier: Number(e.target.value) || 1.5,
+                            })
+                          }
+                          className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        Phạt đi trễ / ngày
+                      </label>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {[20000, 50000, 100000].map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() =>
+                              setPresetForm({
+                                ...presetForm,
+                                latePenaltyPerDay: v,
+                              })
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${presetForm.latePenaltyPerDay === v ? "bg-red-600 text-white" : "bg-white border border-gray-200 text-gray-700 hover:border-red-300"}`}
+                          >
+                            {(v / 1000).toFixed(0)}k
+                          </button>
+                        ))}
+                        <input
+                          type="number"
+                          value={presetForm.latePenaltyPerDay}
+                          onChange={(e) =>
+                            setPresetForm({
+                              ...presetForm,
+                              latePenaltyPerDay: Number(e.target.value) || 0,
+                            })
+                          }
+                          className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center focus:ring-2 focus:ring-red-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* FORMULA PREVIEW */}
+                  {formulaNodes.length > 0 && (
+                    <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
+                      <p className="text-xs font-bold text-emerald-800 mb-2 uppercase tracking-wide">
+                        Công thức đã xây:
+                      </p>
+                      <p className="text-sm font-mono text-gray-800 flex flex-wrap items-center gap-1">
+                        {formulaNodes.map((node, idx) => {
+                          const blk = FORMULA_BLOCKS.find(
+                            (b) => b.id === node.blockId,
+                          );
+                          return (
+                            <React.Fragment key={node.uid}>
+                              {idx > 0 && (
+                                <span className="text-emerald-700 font-bold px-1">
+                                  {node.operator}
+                                </span>
+                              )}
+                              <span className="bg-white border border-emerald-200 rounded px-1.5 py-0.5 text-xs font-semibold text-gray-700">
+                                {blk?.label ?? node.blockId}
+                              </span>
+                            </React.Fragment>
+                          );
+                        })}
+                      </p>
+                    </div>
+                  )}
 
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -1545,22 +2026,21 @@ export default function SalaryManagement() {
                       Đặt làm preset mặc định
                     </span>
                   </label>
-
-                  <div className="flex justify-end gap-3 pt-2">
-                    <button
-                      onClick={() => setShowPresetForm(false)}
-                      className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100"
-                    >
-                      Hủy
-                    </button>
-                    <button
-                      onClick={savePreset}
-                      className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:shadow-lg transition-all"
-                    >
-                      <Save className="w-4 h-4" />
-                      {editingPresetId ? "Cập nhật" : "Tạo preset"}
-                    </button>
-                  </div>
+                </div>
+                <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 shrink-0">
+                  <button
+                    onClick={() => setShowPresetForm(false)}
+                    className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    onClick={savePreset}
+                    className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 transition-all"
+                  >
+                    <Save className="w-4 h-4" />
+                    {editingPresetId ? "Cập nhật preset" : "Tạo preset"}
+                  </button>
                 </div>
               </div>
             </div>
@@ -1695,39 +2175,130 @@ export default function SalaryManagement() {
       {tab === "coefficients" && (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl border border-gray-200 p-6">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">
-              Hệ số lương
-            </h3>
-            <p className="text-sm text-gray-500 mb-4">
-              Các hệ số dùng để tính lương OT, ca đêm, cuối tuần, ngày lễ,
-              chuyên cần.
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-bold text-gray-900">Hệ số lương</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setShowAddCoeff((v) => !v);
+                    setAddCoeffForm({
+                      type: "",
+                      multiplier: "1",
+                      description: "",
+                    });
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Thêm hệ số
+                </button>
+                <button
+                  onClick={loadCoefficients}
+                  className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                >
+                  <Settings className="w-3.5 h-3.5" /> Làm mới
+                </button>
+              </div>
+            </div>
+            <p className="text-sm text-gray-500 mb-5">
+              Chỉnh hệ số nhân lương cho từng loại — nhấn <strong>Lưu</strong>{" "}
+              để áp dụng.
             </p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">
+                    <th className="text-left px-4 py-3 font-semibold text-gray-600 w-40">
                       Loại
                     </th>
-                    <th className="text-center px-4 py-3 font-semibold text-gray-600">
-                      Hệ số
+                    <th className="text-center px-4 py-3 font-semibold text-gray-600 w-36">
+                      Hệ số (×)
                     </th>
                     <th className="text-left px-4 py-3 font-semibold text-gray-600">
                       Mô tả
                     </th>
-                    <th className="text-center px-4 py-3 font-semibold text-gray-600">
-                      Trạng thái
+                    <th className="text-center px-4 py-3 font-semibold text-gray-600 w-32">
+                      Thao tác
                     </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {coefficients.length === 0 ? (
+                  {/* Add new row */}
+                  {showAddCoeff && (
+                    <tr className="bg-emerald-50 border-b-2 border-emerald-200">
+                      <td className="px-4 py-3">
+                        <input
+                          type="text"
+                          value={addCoeffForm.type}
+                          onChange={(e) =>
+                            setAddCoeffForm((f) => ({
+                              ...f,
+                              type: e.target.value,
+                            }))
+                          }
+                          placeholder="vd: bonus_tet"
+                          className="w-full border border-emerald-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          Tên loại (không dấu)
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.1"
+                          value={addCoeffForm.multiplier}
+                          onChange={(e) =>
+                            setAddCoeffForm((f) => ({
+                              ...f,
+                              multiplier: e.target.value,
+                            }))
+                          }
+                          className="w-20 text-center border border-emerald-300 rounded-lg px-2 py-1.5 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="text"
+                          value={addCoeffForm.description}
+                          onChange={(e) =>
+                            setAddCoeffForm((f) => ({
+                              ...f,
+                              description: e.target.value,
+                            }))
+                          }
+                          placeholder="Mô tả..."
+                          className="w-full border border-emerald-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={handleAddCoefficient}
+                            disabled={savingNewCoeff}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                          >
+                            {savingNewCoeff ? "..." : "Thêm"}
+                          </button>
+                          <button
+                            onClick={() => setShowAddCoeff(false)}
+                            className="px-2 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {coefficients.length === 0 && !showAddCoeff ? (
                     <tr>
                       <td
                         colSpan={4}
                         className="text-center py-8 text-gray-400"
                       >
-                        Chưa có hệ số nào. Hãy chạy seed để tạo dữ liệu.
+                        Chưa có hệ số nào. Nhấn <strong>Thêm hệ số</strong> để
+                        tạo mới.
                       </td>
                     </tr>
                   ) : (
@@ -1739,25 +2310,92 @@ export default function SalaryManagement() {
                         holiday: "Ngày lễ",
                         dedication: "Chuyên cần",
                       };
+                      const edit = coeffEditMap[coeff.type] || {
+                        multiplier: String(coeff.multiplier),
+                        description: coeff.description || "",
+                      };
+                      const dirty =
+                        edit.multiplier !== String(coeff.multiplier) ||
+                        edit.description !== (coeff.description || "");
+                      const isDeleting = deletingCoeff === coeff.type;
                       return (
                         <tr key={coeff.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 font-medium text-gray-900">
                             {typeLabels[coeff.type] || coeff.type}
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className="px-3 py-1 rounded-full text-sm font-bold bg-emerald-100 text-emerald-700">
-                              x{coeff.multiplier}
-                            </span>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0.1"
+                              value={edit.multiplier}
+                              onChange={(e) =>
+                                setCoeffEditMap((m) => ({
+                                  ...m,
+                                  [coeff.type]: {
+                                    ...edit,
+                                    multiplier: e.target.value,
+                                  },
+                                }))
+                              }
+                              className="w-20 text-center border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
+                            />
                           </td>
-                          <td className="px-4 py-3 text-gray-600">
-                            {coeff.description}
+                          <td className="px-4 py-3">
+                            <input
+                              type="text"
+                              value={edit.description}
+                              onChange={(e) =>
+                                setCoeffEditMap((m) => ({
+                                  ...m,
+                                  [coeff.type]: {
+                                    ...edit,
+                                    description: e.target.value,
+                                  },
+                                }))
+                              }
+                              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                              placeholder="Mô tả..."
+                            />
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-xs font-medium ${coeff.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
-                            >
-                              {coeff.isActive ? "Đang dùng" : "Tắt"}
-                            </span>
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() =>
+                                  handleSaveCoefficient(coeff.type)
+                                }
+                                disabled={savingCoeff === coeff.type || !dirty}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${dirty ? "bg-emerald-600 text-white hover:bg-emerald-700" : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
+                              >
+                                {savingCoeff === coeff.type ? "..." : "Lưu"}
+                              </button>
+                              {isDeleting ? (
+                                <>
+                                  <button
+                                    onClick={() =>
+                                      handleDeleteCoefficient(coeff.type)
+                                    }
+                                    className="px-2 py-1.5 rounded-lg text-xs font-medium bg-red-600 text-white hover:bg-red-700"
+                                  >
+                                    Xác nhận
+                                  </button>
+                                  <button
+                                    onClick={() => setDeletingCoeff(null)}
+                                    className="px-2 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                  >
+                                    Hủy
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  onClick={() => setDeletingCoeff(coeff.type)}
+                                  className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                  title="Xóa hệ số này"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
