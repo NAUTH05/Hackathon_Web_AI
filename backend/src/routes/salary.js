@@ -4,6 +4,74 @@ const { v4: uuidv4 } = require('uuid');
 const { authenticate, adminOnly, requireSalaryRole, adminOrSalaryRole } = require('../middleware/auth');
 const { toCamelCase, toCamelCaseArray, logAudit } = require('../helpers');
 
+// ========== FORMULA VARIABLES ==========
+
+// GET /api/salary/variables — list all custom formula variables
+router.get('/variables', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM formula_variables ORDER BY created_at ASC');
+    res.json(toCamelCaseArray(rows));
+  } catch (err) {
+    console.error('Get formula variables error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// POST /api/salary/variables — create a custom variable
+router.post('/variables', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { id, label, value, description } = req.body;
+    if (!id || !label || value == null) return res.status(400).json({ error: 'Thiếu id, label hoặc value' });
+    // Validate id format: only lowercase letters, numbers, underscore; must start with custom_
+    if (!/^custom_[a-z0-9_]+$/.test(id)) return res.status(400).json({ error: 'ID biến phải bắt đầu bằng custom_ và chỉ chứa a-z, 0-9, _' });
+    const numVal = parseFloat(value);
+    if (isNaN(numVal)) return res.status(400).json({ error: 'Giá trị phải là số' });
+    await pool.execute(
+      'INSERT INTO formula_variables (id, label, value, description, created_by) VALUES (?, ?, ?, ?, ?)',
+      [id, label.trim(), numVal, (description || '').trim(), req.user.id]
+    );
+    const [rows] = await pool.execute('SELECT * FROM formula_variables WHERE id = ?', [id]);
+    res.status(201).json(toCamelCase(rows[0]));
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Biến đã tồn tại' });
+    console.error('Create formula variable error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/variables/:id — update a variable
+router.put('/variables/:id', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { label, value, description } = req.body;
+    const updates = [];
+    const params = [];
+    if (label != null) { updates.push('label = ?'); params.push(label.trim()); }
+    if (value != null) { const nv = parseFloat(value); if (!isNaN(nv)) { updates.push('value = ?'); params.push(nv); } }
+    if (description != null) { updates.push('description = ?'); params.push(description.trim()); }
+    if (!updates.length) return res.status(400).json({ error: 'Không có gì để cập nhật' });
+    params.push(req.params.id);
+    await pool.execute(`UPDATE formula_variables SET ${updates.join(', ')} WHERE id = ?`, params);
+    const [rows] = await pool.execute('SELECT * FROM formula_variables WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Không tìm thấy biến' });
+    res.json(toCamelCase(rows[0]));
+  } catch (err) {
+    console.error('Update formula variable error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// DELETE /api/salary/variables/:id — delete a variable
+router.delete('/variables/:id', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM formula_variables WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Không tìm thấy biến' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete formula variable error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
 // ========== PRESETS ==========
 
 // GET /api/salary/presets
@@ -381,6 +449,11 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
     const coeffMap = new Map();
     coeffs.forEach(c => coeffMap.set(c.type, parseFloat(c.multiplier || 1.5)));
 
+    // Load custom formula variables from DB
+    const [formulaVarRows] = await pool.query('SELECT id, value FROM formula_variables');
+    const dbFormulaVars = {};
+    for (const fv of formulaVarRows) dbFormulaVars[fv.id] = parseFloat(fv.value);
+
     // Get default preset (fallback for employees without assignment)
     const [defaultPresets] = await pool.execute(
       'SELECT * FROM salary_presets WHERE is_default = 1 LIMIT 1'
@@ -600,8 +673,11 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
       // Use actual worked hours if available, fall back to timesheet
       const hoursData = hoursMap.get(emp.emp_id) || {};
       const actualWorkedHours = hoursData.totalHours || 0;
-      // Present days = any day where employee checked in (not just >=8h days)
-      const presentDays = hoursData.presentDays || timesheet.present_days || 0;
+      // Present days = total_working_hours / 8 (fractional days)
+      // 9h = 1.13 days, 18h = 2.25 days, 48h = 6 days
+      const presentDays = actualWorkedHours > 0
+        ? parseFloat((actualWorkedHours / 8).toFixed(2))
+        : (timesheet.present_days || 0);
 
       const standardHoursPerDay = 8;
       // If preset defines explicit hourly rate, use it; otherwise derive from monthly salary
@@ -629,6 +705,16 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
         late_penalty_rate: config.latePenaltyPerDay,
         deductions: rawDeductions,
       };
+
+      // Merge custom variables: DB-level first, then per-preset overrides
+      Object.assign(formulaVars, dbFormulaVars);
+      if (Array.isArray(config.customVars)) {
+        for (const cv of config.customVars) {
+          if (cv.id && typeof cv.value === 'number') {
+            formulaVars[cv.id] = cv.value;
+          }
+        }
+      }
 
       if (config.customExpression) {
         // Custom text expression mode (supports operator precedence + parentheses)
@@ -684,7 +770,7 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
 
       insertValues.push([
         uuidv4(), emp.emp_id, emp.employee_name, month, presetId, presetName,
-        baseSalary, totalWorkDays, presentDays, totalOtHours,
+        baseSalary, totalWorkDays, parseFloat(presentDays.toFixed(2)), totalOtHours,
         Math.round(otPay), allowances, JSON.stringify({}),
         insurance, healthInsurance,
         Math.round(deductionsPay), JSON.stringify({}),
@@ -1013,6 +1099,41 @@ router.put('/records/:id/adjust-ot', authenticate, requireSalaryRole, async (req
     res.json(toCamelCase(rows[0]));
   } catch (err) {
     console.error('Adjust OT error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// ─── Payroll table column config ───
+router.get('/table-config', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT columns FROM payroll_table_config WHERE user_id = ?',
+      [req.user.id]
+    );
+    if (rows.length > 0) {
+      res.json({ columns: JSON.parse(rows[0].columns) });
+    } else {
+      res.json({ columns: null });
+    }
+  } catch (err) {
+    console.error('Get table config error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+router.put('/table-config', authenticate, async (req, res) => {
+  try {
+    const { columns } = req.body;
+    if (!Array.isArray(columns)) return res.status(400).json({ error: 'columns phải là array' });
+    const colJson = JSON.stringify(columns);
+    await pool.execute(
+      `INSERT INTO payroll_table_config (user_id, columns) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE columns = VALUES(columns)`,
+      [req.user.id, colJson]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Save table config error:', err);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });

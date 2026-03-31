@@ -294,7 +294,7 @@ CREATE TABLE IF NOT EXISTS salary_records (
     preset_name VARCHAR(100),
     base_salary DECIMAL(15,0),
     total_work_days INT,
-    present_days INT,
+    present_days DECIMAL(6,2) COMMENT 'Ngay cong = total_working_hours / 8',
     ot_hours DECIMAL(6,2),
     ot_pay DECIMAL(15,0),
     night_shift_pay DECIMAL(15,0) DEFAULT 0,

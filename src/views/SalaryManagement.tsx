@@ -30,6 +30,7 @@ import {
   calculateSalary,
   deleteSalaryCoefficient,
   deleteSalaryPreset,
+  getDepartments,
   getEmployeesPaginated,
   getSalaryAssignments,
   getSalaryCoefficients,
@@ -95,10 +96,14 @@ export default function SalaryManagement() {
   const [availableDepts, setAvailableDepts] = useState<string[]>([]);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Assign tab pagination
+  // Assign tab pagination + filters
   const [assignPage, setAssignPage] = useState(1);
   const [assignTotalPages, setAssignTotalPages] = useState(1);
   const [assignTotal, setAssignTotal] = useState(0);
+  const [assignSearch, setAssignSearch] = useState("");
+  const [assignDeptFilter, setAssignDeptFilter] = useState("");
+  const [assignPresetFilter, setAssignPresetFilter] = useState("");
+  const assignSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
@@ -223,13 +228,19 @@ export default function SalaryManagement() {
     customExpression: "",
   });
 
+  // Custom user-defined variables (e.g. "thuế", "thưởng")
+  const [customVars, setCustomVars] = useState<{ id: string; label: string; value: number; desc: string }[]>([]);
+  const [showAddVar, setShowAddVar] = useState(false);
+  const [newVarForm, setNewVarForm] = useState({ label: "", value: "", desc: "" });
+
   // Drag-and-drop formula builder
   type FormulaNode = {
     uid: string;
-    blockId: string;
+    blockId: string; // variable ID or "(" or ")" or "number"
     operator: "+" | "-" | "×" | "÷";
+    value?: number; // for custom number nodes
   };
-  const FORMULA_BLOCKS = [
+  const BUILTIN_BLOCKS = [
     {
       id: "working_hours",
       label: "Giờ làm thực tế",
@@ -297,7 +308,14 @@ export default function SalaryManagement() {
       desc: "Khấu trừ từ quản lý phạt",
     },
   ] as const;
-  type BlockId = (typeof FORMULA_BLOCKS)[number]["id"];
+
+  // Combine built-in + custom variable blocks
+  const FORMULA_BLOCKS: { id: string; label: string; color: string; desc: string }[] = [
+    ...BUILTIN_BLOCKS,
+    ...customVars.map(v => ({ id: v.id, label: v.label, color: "indigo" as const, desc: `${v.desc || 'Biến tùy chỉnh'} = ${v.value.toLocaleString('vi-VN')}` })),
+  ];
+
+  type BlockId = string;
   const blockColorMap: Record<string, string> = {
     blue: "bg-blue-100 text-blue-800 border-blue-200",
     green: "bg-green-100 text-green-800 border-green-200",
@@ -309,10 +327,177 @@ export default function SalaryManagement() {
     sky: "bg-sky-100 text-sky-800 border-sky-200",
     red: "bg-red-100 text-red-800 border-red-200",
     rose: "bg-rose-100 text-rose-800 border-rose-200",
+    indigo: "bg-indigo-100 text-indigo-800 border-indigo-200",
+    pink: "bg-pink-100 text-pink-800 border-pink-200",
+  };
+
+  async function addCustomVar() {
+    const label = newVarForm.label.trim();
+    if (!label) return;
+    const val = parseFloat(newVarForm.value) || 0;
+    const id = "custom_" + label.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+    if (FORMULA_BLOCKS.some(b => b.id === id)) {
+      showToast('warning', 'Trùng tên', 'Biến này đã tồn tại');
+      return;
+    }
+    try {
+      const res = await fetch(buildApiUrl('/api/salary/variables'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+        body: JSON.stringify({ id, label, value: val, description: newVarForm.desc.trim() || `Biến tùy chỉnh: ${label}` }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); showToast('error', 'Lỗi', err.error || 'Không thể tạo biến'); return; }
+      await loadFormulaVars();
+      setNewVarForm({ label: '', value: '', desc: '' });
+      setShowAddVar(false);
+    } catch { showToast('error', 'Lỗi', 'Không thể kết nối server'); }
+  }
+
+  async function removeCustomVar(varId: string) {
+    try {
+      await fetch(buildApiUrl(`/api/salary/variables/${encodeURIComponent(varId)}`), {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+      });
+      await loadFormulaVars();
+      setFormulaNodes(prev => prev.filter(n => n.blockId !== varId));
+    } catch { showToast('error', 'Lỗi', 'Không thể xóa biến'); }
   };
   const [formulaNodes, setFormulaNodes] = useState<FormulaNode[]>([]);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const dragBlockRef = useRef<BlockId | null>(null);
+  const [formulaMode, setFormulaMode] = useState<"blocks" | "text">("blocks");
+
+  // Convert formula nodes → expression string for backend
+  function nodesToExpression(nodes: FormulaNode[]): string {
+    if (!nodes.length) return "";
+    const opMap: Record<string, string> = { "+": "+", "-": "-", "×": "*", "÷": "/" };
+    return nodes.map((n, i) => {
+      const varName = n.blockId === "number" ? String(n.value ?? 0) : n.blockId;
+      if (n.blockId === "(" || n.blockId === ")") return n.blockId;
+      return i === 0 ? varName : `${opMap[n.operator] || "+"} ${varName}`;
+    }).join(" ");
+  }
+
+  // Validate formula nodes — returns error message or null
+  // NOTE: operators (+,-,×,÷) are stored as .operator on each node (for idx > 0),
+  // so consecutive var nodes are fine — they implicitly have operators between them.
+  function validateFormula(nodes: FormulaNode[]): string | null {
+    if (!nodes.length) return null;
+    let parenDepth = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n.blockId === "(") {
+        parenDepth++;
+      } else if (n.blockId === ")") {
+        parenDepth--;
+        if (parenDepth < 0) return "Dấu ) thừa ở vị trí " + (i + 1);
+      }
+    }
+    if (parenDepth !== 0) return `Thiếu ${parenDepth} dấu đóng ngoặc )`;
+    // Check: at least one variable (not just parens)
+    const hasVar = nodes.some(n => n.blockId !== "(" && n.blockId !== ")");
+    if (!hasVar) return "Công thức phải có ít nhất 1 biến";
+    return null;
+  }
+
+  // Sample data for formula preview
+  // Sample data for formula preview — includes custom vars
+  const SAMPLE_VARS: Record<string, number> = {
+    working_hours: 160,
+    present_days: 22,
+    hourly_rate: presetForm.baseSalary > 0 ? presetForm.baseSalary / ((presetForm.workDaysPerMonth || 22) * 8) : 34091,
+    daily_rate: presetForm.baseSalary > 0 ? presetForm.baseSalary / (presetForm.workDaysPerMonth || 22) : 272727,
+    base_salary: presetForm.baseSalary || 6000000,
+    ot_hours: 8,
+    ot_multiplier: presetForm.otMultiplier || 1.5,
+    allowances: presetForm.allowances || 0,
+    late_days: 2,
+    late_penalty_rate: presetForm.latePenaltyPerDay || 50000,
+    deductions: 0,
+    ...Object.fromEntries(customVars.map(v => [v.id, v.value])),
+  };
+
+  // Evaluate expression client-side for preview
+  function evalExpressionPreview(expr: string): number | null {
+    if (!expr.trim()) return null;
+    try {
+      const tokens: { type: string; value: any }[] = [];
+      let i = 0;
+      const s = expr.replace(/\s+/g, '');
+      while (i < s.length) {
+        if ('+-*/()'.includes(s[i])) {
+          tokens.push({ type: 'op', value: s[i] }); i++;
+        } else if (/[0-9.]/.test(s[i])) {
+          let num = '';
+          while (i < s.length && /[0-9.]/.test(s[i])) { num += s[i]; i++; }
+          tokens.push({ type: 'num', value: parseFloat(num) || 0 });
+        } else if (/[a-z_]/i.test(s[i])) {
+          let name = '';
+          while (i < s.length && /[a-z_0-9]/i.test(s[i])) { name += s[i]; i++; }
+          tokens.push({ type: 'num', value: SAMPLE_VARS[name] ?? 0 });
+        } else { i++; }
+      }
+      let pos = 0;
+      function peek() { return pos < tokens.length ? tokens[pos] : null; }
+      function consume() { return tokens[pos++]; }
+      function parseE(): number {
+        let left = parseT();
+        while (peek() && (peek()!.value === '+' || peek()!.value === '-')) {
+          const op = consume()!.value;
+          const right = parseT();
+          left = op === '+' ? left + right : left - right;
+        }
+        return left;
+      }
+      function parseT(): number {
+        let left = parseF();
+        while (peek() && (peek()!.value === '*' || peek()!.value === '/')) {
+          const op = consume()!.value;
+          const right = parseF();
+          left = op === '*' ? left * right : (right !== 0 ? left / right : 0);
+        }
+        return left;
+      }
+      function parseF(): number {
+        const tok = peek();
+        if (!tok) return 0;
+        if (tok.type === 'num') { consume(); return tok.value; }
+        if (tok.value === '(') { consume(); const v = parseE(); if (peek()?.value === ')') consume(); return v; }
+        if (tok.value === '-') { consume(); return -parseF(); }
+        consume(); return 0;
+      }
+      const result = parseE();
+      return Math.max(0, isNaN(result) ? 0 : result);
+    } catch { return null; }
+  }
+
+  // Get the effective expression (from text or auto-generated from blocks)
+  function getEffectiveExpression(): string {
+    if (formulaMode === "text" && presetForm.customExpression) {
+      return presetForm.customExpression;
+    }
+    return nodesToExpression(formulaNodes);
+  }
+
+  // Payroll table column config
+  const [tableColumns, setTableColumns] = useState<{ key: string; label: string; visible: boolean; order: number }[]>([]);
+  const [showColumnConfig, setShowColumnConfig] = useState(false);
+
+  const DEFAULT_COLUMNS = [
+    { key: "employee_name", label: "Nhân viên", visible: true, order: 1 },
+    { key: "department", label: "Phòng ban", visible: true, order: 2 },
+    { key: "preset", label: "Preset", visible: true, order: 3 },
+    { key: "base_salary", label: "Lương CB", visible: true, order: 4 },
+    { key: "total_working_hours", label: "Tổng giờ làm", visible: true, order: 5 },
+    { key: "present_days", label: "Ngày công", visible: true, order: 6 },
+    { key: "ot", label: "OT", visible: true, order: 7 },
+    { key: "allowances", label: "Phụ cấp", visible: true, order: 8 },
+    { key: "deductions", label: "Khấu trừ", visible: true, order: 9 },
+    { key: "late_penalty", label: "Phạt trễ", visible: true, order: 10 },
+    { key: "gross_salary", label: "Lương trước thuế", visible: true, order: 11 },
+    { key: "net_salary", label: "Lương ròng", visible: true, order: 12 },
+  ];
 
   // OT adjustment popup
   const [otPopupRecord, setOtPopupRecord] = useState<SalaryRecord | null>(null);
@@ -323,14 +508,87 @@ export default function SalaryManagement() {
   });
   const [savingOt, setSavingOt] = useState(false);
 
+  async function loadFormulaVars() {
+    try {
+      const res = await fetch(buildApiUrl('/api/salary/variables'), {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        setCustomVars(rows.map((r: any) => ({ id: r.id, label: r.label, value: parseFloat(r.value), desc: r.description || '' })));
+      }
+    } catch {}
+  }
+
   useEffect(() => {
     reloadPresets();
+    loadTableConfig();
+    loadFormulaVars();
+    getDepartments().then(depts => {
+      setAvailableDepts(depts.map(d => d.name).filter(Boolean).sort());
+    }).catch(() => {});
   }, []);
 
   async function reloadPresets() {
     setPresets(await getSalaryPresets());
     setAssignments(await getSalaryAssignments());
   }
+
+  async function loadTableConfig() {
+    try {
+      const res = await fetch(buildApiUrl('/api/salary/table-config'), {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.columns?.length) {
+          setTableColumns(data.columns);
+          return;
+        }
+      }
+    } catch {}
+    setTableColumns(DEFAULT_COLUMNS);
+  }
+
+  async function saveTableConfig(cols: typeof tableColumns) {
+    setTableColumns(cols);
+    try {
+      await fetch(buildApiUrl('/api/salary/table-config'), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({ columns: cols })
+      });
+    } catch {}
+  }
+
+  function isColVisible(key: string) {
+    const col = tableColumns.find(c => c.key === key);
+    return col ? col.visible : true;
+  }
+
+  function toggleColVisible(key: string) {
+    const updated = tableColumns.map(c => c.key === key ? { ...c, visible: !c.visible } : c);
+    saveTableConfig(updated);
+  }
+
+  function moveCol(key: string, dir: -1 | 1) {
+    const idx = tableColumns.findIndex(c => c.key === key);
+    if (idx < 0) return;
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= tableColumns.length) return;
+    const updated = [...tableColumns];
+    const [a, b] = [updated[idx], updated[swapIdx]];
+    const tmpOrder = a.order;
+    a.order = b.order;
+    b.order = tmpOrder;
+    updated.sort((x, y) => x.order - y.order);
+    saveTableConfig(updated);
+  }
+
+  const visibleColCount = tableColumns.filter(c => c.visible).length;
 
   const loadSalaryRecords = useCallback(async () => {
     setLoading(true);
@@ -374,18 +632,21 @@ export default function SalaryManagement() {
 
   const loadAssignEmployees = useCallback(async () => {
     try {
-      const res = await getEmployeesPaginated({
+      const params: Record<string, string> = {
         page: String(assignPage),
         limit: "30",
         isActive: "true",
-      });
+      };
+      if (assignSearch) params.search = assignSearch;
+      if (assignDeptFilter) params.department = assignDeptFilter;
+      const res = await getEmployeesPaginated(params);
       setEmployees(res.data);
       setAssignTotalPages(res.pagination.totalPages);
       setAssignTotal(res.pagination.total);
     } catch (err) {
       console.error(err);
     }
-  }, [assignPage]);
+  }, [assignPage, assignSearch, assignDeptFilter]);
 
   useEffect(() => {
     if (tab === "salary") loadSalaryRecords();
@@ -638,6 +899,8 @@ export default function SalaryManagement() {
       includeLatePenalty: cfg.includeLatePenalty,
       customExpression: cfg.customExpression ?? "",
     });
+    // If has customExpression, switch to text mode; otherwise blocks
+    setFormulaMode(cfg.customExpression ? "text" : "blocks");
     setEditingPresetId(p.id);
     try {
       const parsed =
@@ -653,6 +916,18 @@ export default function SalaryManagement() {
 
   async function savePreset() {
     if (!presetForm.name || presetForm.baseSalary <= 0) return;
+    // Validate formula if using blocks
+    if (formulaMode === "blocks" && formulaNodes.length > 0) {
+      const err = validateFormula(formulaNodes);
+      if (err) {
+        showToast("error", "Công thức lỗi", err);
+        return;
+      }
+    }
+    // Auto-generate expression from blocks if in block mode
+    const effectiveExpression = formulaMode === "text"
+      ? (presetForm.customExpression || undefined)
+      : (formulaNodes.length > 0 ? nodesToExpression(formulaNodes) : undefined);
     const config = JSON.stringify({
       salaryBasis: presetForm.salaryBasis,
       hourlyRate: presetForm.hourlyRate > 0 ? presetForm.hourlyRate : undefined,
@@ -664,7 +939,7 @@ export default function SalaryManagement() {
       includeDeductions: presetForm.includeDeductions,
       includeLatePenalty: presetForm.includeLatePenalty,
       formulaNodes: formulaNodes,
-      customExpression: presetForm.customExpression || undefined,
+      customExpression: effectiveExpression,
     });
     const payload = {
       name: presetForm.name,
@@ -751,6 +1026,7 @@ export default function SalaryManagement() {
           ? parseInt(c.workDaysPerMonth)
           : 22,
         customExpression: c.customExpression || "",
+        formulaNodes: (c.formulaNodes || []) as FormulaNode[],
       };
     } catch {
       return {
@@ -764,6 +1040,7 @@ export default function SalaryManagement() {
         hourlyRate: 0,
         workDaysPerMonth: 22,
         customExpression: "",
+        formulaNodes: [] as FormulaNode[],
       };
     }
   }
@@ -973,6 +1250,53 @@ export default function SalaryManagement() {
                 📊 Xuất Excel (Payroll)
               </button>
             )}
+            {(isAdmin || isSalaryManager) && (
+              <div className="relative mt-5">
+                <button
+                  onClick={() => setShowColumnConfig(!showColumnConfig)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-100 transition-all"
+                  title="Tùy chỉnh cột hiển thị"
+                >
+                  <Settings className="w-4 h-4" /> Cột
+                </button>
+                {showColumnConfig && (
+                  <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-2xl border border-gray-200 p-4 z-50 w-72">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-bold text-gray-800">Tùy chỉnh cột</h4>
+                      <button onClick={() => setShowColumnConfig(false)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
+                    </div>
+                    <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                      {tableColumns.map((col) => (
+                        <div key={col.key} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50">
+                          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer flex-1">
+                            <input
+                              type="checkbox"
+                              checked={col.visible}
+                              onChange={() => toggleColVisible(col.key)}
+                              className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            {col.label}
+                          </label>
+                          <div className="flex items-center gap-0.5">
+                            <button onClick={() => moveCol(col.key, -1)} className="p-0.5 text-gray-400 hover:text-gray-600 text-[10px]">▲</button>
+                            <button onClick={() => moveCol(col.key, 1)} className="p-0.5 text-gray-400 hover:text-gray-600 text-[10px]">▼</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-gray-100 flex justify-between">
+                      <button
+                        onClick={() => saveTableConfig(DEFAULT_COLUMNS)}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Đặt lại mặc định
+                      </button>
+                      <span className="text-[10px] text-gray-400">{tableColumns.filter(c => c.visible).length}/{tableColumns.length} cột</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Controls Row 2: Search + Filters */}
@@ -1101,71 +1425,95 @@ export default function SalaryManagement() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200">
-                      <th
-                        className="text-left px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                        onClick={() => toggleSort("employee_name")}
-                      >
-                        Nhân viên {sortIcon("employee_name")}
-                      </th>
-                      <th
-                        className="text-left px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                        onClick={() => toggleSort("department")}
-                      >
-                        Phòng ban {sortIcon("department")}
-                      </th>
-                      <th className="text-left px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                        Preset
-                      </th>
-                      <th
-                        className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                        onClick={() => toggleSort("base_salary")}
-                      >
-                        Lương CB {sortIcon("base_salary")}
-                      </th>
-                      <th className="text-center px-3 py-3 font-semibold text-blue-600 whitespace-nowrap">
-                        <span className="flex items-center justify-center gap-1">
-                          <Clock className="w-3.5 h-3.5" />
-                          Tổng giờ làm
-                        </span>
-                      </th>
-                      <th
-                        className="text-center px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                        onClick={() => toggleSort("present_days")}
-                      >
-                        Ngày công {sortIcon("present_days")}
-                      </th>
-                      <th
-                        className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                        onClick={() => toggleSort("ot_hours")}
-                      >
-                        OT {sortIcon("ot_hours")}
-                        {(isAdmin || isSalaryManager) && (
-                          <span className="block text-[10px] text-blue-400 font-normal">
-                            Click điều chỉnh
+                      {isColVisible("employee_name") && (
+                        <th
+                          className="text-left px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
+                          onClick={() => toggleSort("employee_name")}
+                        >
+                          Nhân viên {sortIcon("employee_name")}
+                        </th>
+                      )}
+                      {isColVisible("department") && (
+                        <th
+                          className="text-left px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
+                          onClick={() => toggleSort("department")}
+                        >
+                          Phòng ban {sortIcon("department")}
+                        </th>
+                      )}
+                      {isColVisible("preset") && (
+                        <th className="text-left px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
+                          Preset
+                        </th>
+                      )}
+                      {isColVisible("base_salary") && (
+                        <th
+                          className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
+                          onClick={() => toggleSort("base_salary")}
+                        >
+                          Lương CB {sortIcon("base_salary")}
+                        </th>
+                      )}
+                      {isColVisible("total_working_hours") && (
+                        <th className="text-center px-3 py-3 font-semibold text-blue-600 whitespace-nowrap">
+                          <span className="flex items-center justify-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            Tổng giờ làm
                           </span>
-                        )}
-                      </th>
-                      <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                        Phụ cấp
-                      </th>
-                      <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                        Khấu trừ
-                      </th>
-                      <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                        Phạt trễ
-                      </th>
-                      <th
-                        className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                        onClick={() => toggleSort("gross_salary")}
-                      >
-                        Lương trước thuế {sortIcon("gross_salary")}
-                      </th>
-                      <th
-                        className="text-right px-3 py-3 font-semibold text-emerald-700 cursor-pointer hover:text-emerald-900 select-none whitespace-nowrap"
-                        onClick={() => toggleSort("net_salary")}
-                      >
-                        Lương ròng {sortIcon("net_salary")}
-                      </th>
+                        </th>
+                      )}
+                      {isColVisible("present_days") && (
+                        <th
+                          className="text-center px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
+                          onClick={() => toggleSort("present_days")}
+                        >
+                          Ngày công {sortIcon("present_days")}
+                        </th>
+                      )}
+                      {isColVisible("ot") && (
+                        <th
+                          className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
+                          onClick={() => toggleSort("ot_hours")}
+                        >
+                          OT {sortIcon("ot_hours")}
+                          {(isAdmin || isSalaryManager) && (
+                            <span className="block text-[10px] text-blue-400 font-normal">
+                              Click điều chỉnh
+                            </span>
+                          )}
+                        </th>
+                      )}
+                      {isColVisible("allowances") && (
+                        <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
+                          Phụ cấp
+                        </th>
+                      )}
+                      {isColVisible("deductions") && (
+                        <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
+                          Khấu trừ
+                        </th>
+                      )}
+                      {isColVisible("late_penalty") && (
+                        <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
+                          Phạt trễ
+                        </th>
+                      )}
+                      {isColVisible("gross_salary") && (
+                        <th
+                          className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
+                          onClick={() => toggleSort("gross_salary")}
+                        >
+                          Lương trước thuế {sortIcon("gross_salary")}
+                        </th>
+                      )}
+                      {isColVisible("net_salary") && (
+                        <th
+                          className="text-right px-3 py-3 font-semibold text-emerald-700 cursor-pointer hover:text-emerald-900 select-none whitespace-nowrap"
+                          onClick={() => toggleSort("net_salary")}
+                        >
+                          Lương ròng {sortIcon("net_salary")}
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -1174,102 +1522,126 @@ export default function SalaryManagement() {
                         key={r.id}
                         className="hover:bg-gray-50 transition-colors"
                       >
-                        <td className="px-3 py-3">
-                          <div>
-                            <p className="font-medium text-gray-900">
-                              {r.employeeName}
-                            </p>
-                            {r.employeeCode && (
-                              <p className="text-[11px] text-gray-400">
-                                {r.employeeCode}
+                        {isColVisible("employee_name") && (
+                          <td className="px-3 py-3">
+                            <div>
+                              <p className="font-medium text-gray-900">
+                                {r.employeeName}
                               </p>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-gray-600 text-xs">
-                          <div>
-                            <p>{r.department || "—"}</p>
-                            {r.position && (
-                              <p className="text-[11px] text-gray-400">
-                                {r.position}
-                              </p>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-3 py-3">
-                          <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">
-                            {r.presetName}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-right text-gray-700">
-                          {fmt(r.baseSalary)}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className="font-semibold text-blue-700">
-                            {(r.totalWorkingHours ?? 0).toFixed(1)}h
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <div>
-                            <span
-                              className={`font-bold text-sm ${r.presentDays > 0 ? "text-gray-800" : "text-red-400"}`}
-                            >
-                              {r.presentDays}
-                            </span>
-                            <span className="text-gray-400 text-xs">
-                              /{r.totalWorkDays}
-                            </span>
-                            <div className="text-[10px] text-gray-400 mt-0.5">
-                              {(r.totalWorkingHours ?? 0) > 0
-                                ? `${(r.totalWorkingHours ?? 0).toFixed(0)}h ÷ 8`
-                                : "chưa có giờ"}
+                              {r.employeeCode && (
+                                <p className="text-[11px] text-gray-400">
+                                  {r.employeeCode}
+                                </p>
+                              )}
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-right">
-                          <button
-                            onClick={() =>
-                              isAdmin || isSalaryManager
-                                ? openOtPopup(r)
-                                : undefined
-                            }
-                            className={`group text-right w-full ${isAdmin || isSalaryManager ? "cursor-pointer hover:bg-blue-50 rounded-lg p-1 transition-colors" : ""}`}
-                          >
-                            <span className="text-gray-700">{r.otHours}h</span>
-                            {r.otPay > 0 && (
-                              <p className="text-[11px] text-blue-500">
-                                {fmt(r.otPay)}
-                              </p>
+                          </td>
+                        )}
+                        {isColVisible("department") && (
+                          <td className="px-3 py-3 text-gray-600 text-xs">
+                            <div>
+                              <p>{r.department || "—"}</p>
+                              {r.position && (
+                                <p className="text-[11px] text-gray-400">
+                                  {r.position}
+                                </p>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                        {isColVisible("preset") && (
+                          <td className="px-3 py-3">
+                            <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">
+                              {r.presetName}
+                            </span>
+                          </td>
+                        )}
+                        {isColVisible("base_salary") && (
+                          <td className="px-3 py-3 text-right text-gray-700">
+                            {fmt(r.baseSalary)}
+                          </td>
+                        )}
+                        {isColVisible("total_working_hours") && (
+                          <td className="px-3 py-3 text-center">
+                            <span className="font-semibold text-blue-700">
+                              {(r.totalWorkingHours ?? 0).toFixed(1)}h
+                            </span>
+                          </td>
+                        )}
+                        {isColVisible("present_days") && (
+                          <td className="px-3 py-3 text-center">
+                            <div>
+                              <span
+                                className={`font-bold text-sm ${r.presentDays > 0 ? "text-gray-800" : "text-red-400"}`}
+                              >
+                                {typeof r.presentDays === 'number' ? r.presentDays.toFixed(2) : r.presentDays}
+                              </span>
+                              <span className="text-gray-400 text-xs">
+                                /{r.totalWorkDays}
+                              </span>
+                              <div className="text-[10px] text-gray-400 mt-0.5">
+                                {(r.totalWorkingHours ?? 0) > 0
+                                  ? `${(r.totalWorkingHours ?? 0).toFixed(1)}h ÷ 8`
+                                  : "chưa có giờ"}
+                              </div>
+                            </div>
+                          </td>
+                        )}
+                        {isColVisible("ot") && (
+                          <td className="px-3 py-3 text-right">
+                            <button
+                              onClick={() =>
+                                isAdmin || isSalaryManager
+                                  ? openOtPopup(r)
+                                  : undefined
+                              }
+                              className={`group text-right w-full ${isAdmin || isSalaryManager ? "cursor-pointer hover:bg-blue-50 rounded-lg p-1 transition-colors" : ""}`}
+                            >
+                              <span className="text-gray-700">{r.otHours}h</span>
+                              {r.otPay > 0 && (
+                                <p className="text-[11px] text-blue-500">
+                                  {fmt(r.otPay)}
+                                </p>
+                              )}
+                            </button>
+                          </td>
+                        )}
+                        {isColVisible("allowances") && (
+                          <td className="px-3 py-3 text-right text-blue-600">
+                            {r.allowances > 0 ? (
+                              `+${fmt(r.allowances)}`
+                            ) : (
+                              <span className="text-gray-300">0đ</span>
                             )}
-                          </button>
-                        </td>
-                        <td className="px-3 py-3 text-right text-blue-600">
-                          {r.allowances > 0 ? (
-                            `+${fmt(r.allowances)}`
-                          ) : (
-                            <span className="text-gray-300">0đ</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3 text-right text-red-500">
-                          {r.deductions > 0 ? (
-                            `-${fmt(r.deductions)}`
-                          ) : (
-                            <span className="text-gray-300">0đ</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3 text-right text-orange-500">
-                          {r.latePenalty > 0 ? (
-                            `-${fmt(r.latePenalty)}`
-                          ) : (
-                            <span className="text-gray-300">0đ</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3 text-right font-medium text-gray-800">
-                          {fmt(r.grossSalary)}
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-emerald-600">
-                          {fmt(r.netSalary)}
-                        </td>
+                          </td>
+                        )}
+                        {isColVisible("deductions") && (
+                          <td className="px-3 py-3 text-right text-red-500">
+                            {r.deductions > 0 ? (
+                              `-${fmt(r.deductions)}`
+                            ) : (
+                              <span className="text-gray-300">0đ</span>
+                            )}
+                          </td>
+                        )}
+                        {isColVisible("late_penalty") && (
+                          <td className="px-3 py-3 text-right text-orange-500">
+                            {r.latePenalty > 0 ? (
+                              `-${fmt(r.latePenalty)}`
+                            ) : (
+                              <span className="text-gray-300">0đ</span>
+                            )}
+                          </td>
+                        )}
+                        {isColVisible("gross_salary") && (
+                          <td className="px-3 py-3 text-right font-medium text-gray-800">
+                            {fmt(r.grossSalary)}
+                          </td>
+                        )}
+                        {isColVisible("net_salary") && (
+                          <td className="px-3 py-3 text-right font-bold text-emerald-600">
+                            {fmt(r.netSalary)}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -1278,17 +1650,21 @@ export default function SalaryManagement() {
                       <tfoot>
                         <tr className="bg-emerald-50 border-t-2 border-emerald-200">
                           <td
-                            colSpan={10}
+                            colSpan={visibleColCount - 2}
                             className="px-3 py-3 font-semibold text-emerald-800"
                           >
                             Tổng cộng ({salaryTotal} NV)
                           </td>
-                          <td className="px-3 py-3 text-right font-bold text-gray-800">
-                            {fmt(salaryTotalGross)}
-                          </td>
-                          <td className="px-3 py-3 text-right font-bold text-emerald-700">
-                            {fmt(totalNet)}
-                          </td>
+                          {isColVisible("gross_salary") && (
+                            <td className="px-3 py-3 text-right font-bold text-gray-800">
+                              {fmt(salaryTotalGross)}
+                            </td>
+                          )}
+                          {isColVisible("net_salary") && (
+                            <td className="px-3 py-3 text-right font-bold text-emerald-700">
+                              {fmt(totalNet)}
+                            </td>
+                          )}
                         </tr>
                       </tfoot>
                     )}
@@ -1573,6 +1949,19 @@ export default function SalaryManagement() {
                       </div>
                     );
                   })()}
+
+                  {/* Formula preview */}
+                  {(() => {
+                    const cfg = parsePresetConfig(p.customFormula);
+                    const expr = cfg.customExpression || (cfg.formulaNodes?.length ? nodesToExpression(cfg.formulaNodes) : null);
+                    if (!expr) return null;
+                    return (
+                      <div className="mt-2 bg-gray-50 rounded-lg p-2 border border-gray-100">
+                        <p className="text-[10px] text-gray-400 mb-0.5">Công thức:</p>
+                        <code className="text-[11px] text-gray-600 font-mono break-all">{expr}</code>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -1718,258 +2107,371 @@ export default function SalaryManagement() {
                     </div>
                   </div>
 
-                  {/* DRAG-DROP FORMULA BUILDER */}
+                  {/* FORMULA BUILDER — Block mode / Text mode toggle */}
                   <div>
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center justify-between mb-3">
                       <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide flex items-center gap-1.5">
-                        <GripVertical className="w-3.5 h-3.5" /> Xây dựng công
-                        thức tính lương
+                        <Calculator className="w-3.5 h-3.5" /> Công thức tính lương
                       </h3>
-                      {formulaNodes.length > 0 && (
+                      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
                         <button
-                          onClick={() => setFormulaNodes([])}
-                          className="text-xs text-red-500 hover:underline"
+                          type="button"
+                          onClick={() => setFormulaMode("blocks")}
+                          className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${formulaMode === "blocks" ? "bg-white shadow text-emerald-700" : "text-gray-500 hover:text-gray-700"}`}
                         >
-                          Xóa tất cả
+                          🧩 Kéo thả
                         </button>
-                      )}
-                    </div>
-                    <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 mb-3">
-                      <p className="text-[11px] text-gray-500 mb-2 font-medium">
-                        Kho khối dữ liệu — kéo vào công thức bên dưới:
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {FORMULA_BLOCKS.map((blk) => (
-                          <div
-                            key={blk.id}
-                            draggable
-                            onDragStart={() => {
-                              dragBlockRef.current = blk.id;
-                            }}
-                            title={blk.desc}
-                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-grab active:cursor-grabbing select-none hover:shadow-sm transition-all ${blockColorMap[blk.color]}`}
-                          >
-                            <GripVertical className="w-3 h-3 opacity-40" />
-                            {blk.label}
-                          </div>
-                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormulaMode("text");
+                            // Auto-fill expression from existing blocks
+                            if (formulaNodes.length > 0 && !presetForm.customExpression) {
+                              setPresetForm(f => ({ ...f, customExpression: nodesToExpression(formulaNodes) }));
+                            }
+                          }}
+                          className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${formulaMode === "text" ? "bg-white shadow text-indigo-700" : "text-gray-500 hover:text-gray-700"}`}
+                        >
+                          ✏️ Nâng cao
+                        </button>
                       </div>
                     </div>
-                    <div
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setDragOverIndex(formulaNodes.length);
-                      }}
-                      onDragLeave={() => setDragOverIndex(null)}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const blockId = dragBlockRef.current;
-                        if (!blockId) return;
-                        setFormulaNodes((prev) => [
-                          ...prev,
-                          {
-                            uid: `${blockId}-${Date.now()}`,
-                            blockId,
-                            operator: "+" as const,
-                          },
-                        ]);
-                        setDragOverIndex(null);
-                        dragBlockRef.current = null;
-                      }}
-                      className={`min-h-20 rounded-xl border-2 border-dashed p-3 transition-all ${dragOverIndex !== null ? "border-emerald-400 bg-emerald-50" : "border-gray-200 bg-gray-50"}`}
-                    >
-                      {formulaNodes.length === 0 ? (
-                        <div className="flex items-center justify-center h-16 text-sm text-gray-400">
-                          Kéo khối dữ liệu vào đây để xây công thức...
-                        </div>
-                      ) : (
-                        <div className="flex flex-wrap items-center gap-2">
-                          {formulaNodes.map((node, idx) => {
-                            const blk = FORMULA_BLOCKS.find(
-                              (b) => b.id === node.blockId,
-                            );
-                            return (
-                              <React.Fragment key={node.uid}>
-                                {idx > 0 && (
-                                  <select
-                                    value={node.operator}
-                                    onChange={(e) => {
-                                      const op = e.target
-                                        .value as FormulaNode["operator"];
-                                      setFormulaNodes((prev) =>
-                                        prev.map((n, i) =>
-                                          i === idx
-                                            ? { ...n, operator: op }
-                                            : n,
-                                        ),
-                                      );
-                                    }}
-                                    className="w-12 text-center text-sm font-bold text-gray-700 border border-gray-300 rounded-lg py-1 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
-                                  >
-                                    <option value="+">+</option>
-                                    <option value="-">−</option>
-                                    <option value="×">×</option>
-                                    <option value="÷">÷</option>
-                                  </select>
-                                )}
-                                <div
-                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium ${blk ? blockColorMap[blk.color] : "bg-gray-100 text-gray-700 border-gray-200"}`}
-                                >
-                                  <span>{blk?.label ?? node.blockId}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setFormulaNodes((prev) =>
-                                        prev.filter((_, i) => i !== idx),
-                                      )
-                                    }
-                                    className="ml-1 text-current opacity-50 hover:opacity-100"
-                                  >
+
+                    {formulaMode === "blocks" ? (
+                      <>
+                        {/* Block palette */}
+                        <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 mb-3">
+                          <p className="text-[11px] text-gray-500 mb-2 font-medium">
+                            Kho khối — kéo vào công thức bên dưới. Hover để xem giải thích.
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {FORMULA_BLOCKS.map((blk) => (
+                              <div
+                                key={blk.id}
+                                draggable
+                                onDragStart={() => { dragBlockRef.current = blk.id; }}
+                                className={`group relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-grab active:cursor-grabbing select-none hover:shadow-sm transition-all ${blockColorMap[blk.color]}`}
+                              >
+                                <GripVertical className="w-3 h-3 opacity-40" />
+                                {blk.label}
+                                {/* Tooltip */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-[11px] rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg">
+                                  <div className="font-semibold mb-0.5">{blk.label}</div>
+                                  <div className="text-gray-300">{blk.desc}</div>
+                                  <div className="text-emerald-300 mt-0.5">Ví dụ: {(SAMPLE_VARS[blk.id] ?? 0).toLocaleString("vi-VN")}</div>
+                                  <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
+                                </div>
+                              </div>
+                            ))}
+                            {/* Parentheses buttons */}
+                            <button
+                              type="button"
+                              onClick={() => setFormulaNodes(prev => [...prev, { uid: `paren-open-${Date.now()}`, blockId: "(", operator: "+" }])}
+                              className="px-2.5 py-1.5 rounded-lg border border-gray-300 text-xs font-bold text-gray-600 bg-white hover:bg-gray-50 cursor-pointer"
+                            >
+                              (
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFormulaNodes(prev => [...prev, { uid: `paren-close-${Date.now()}`, blockId: ")", operator: "+" }])}
+                              className="px-2.5 py-1.5 rounded-lg border border-gray-300 text-xs font-bold text-gray-600 bg-white hover:bg-gray-50 cursor-pointer"
+                            >
+                              )
+                            </button>
+                            {/* Add custom variable button */}
+                            <button
+                              type="button"
+                              onClick={() => setShowAddVar(true)}
+                              className="px-2.5 py-1.5 rounded-lg border border-dashed border-indigo-300 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 cursor-pointer flex items-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" /> Thêm biến
+                            </button>
+                          </div>
+
+                          {/* Custom variable inline form */}
+                          {showAddVar && (
+                            <div className="mt-2 bg-indigo-50 rounded-lg p-3 border border-indigo-200">
+                              <p className="text-[11px] font-semibold text-indigo-700 mb-2">Tạo biến tùy chỉnh</p>
+                              <div className="flex items-end gap-2 flex-wrap">
+                                <div>
+                                  <label className="text-[10px] text-gray-500 block">Tên biến *</label>
+                                  <input
+                                    type="text"
+                                    placeholder="VD: thuế, thưởng..."
+                                    value={newVarForm.label}
+                                    onChange={(e) => setNewVarForm({ ...newVarForm, label: e.target.value })}
+                                    className="border border-gray-200 rounded-lg px-2 py-1 text-xs w-32 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-gray-500 block">Giá trị *</label>
+                                  <input
+                                    type="text"
+                                    placeholder="VD: 0.02 hoặc 500000"
+                                    value={newVarForm.value}
+                                    onChange={(e) => setNewVarForm({ ...newVarForm, value: e.target.value })}
+                                    className="border border-gray-200 rounded-lg px-2 py-1 text-xs w-36 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-gray-500 block">Mô tả</label>
+                                  <input
+                                    type="text"
+                                    placeholder="VD: Thuế TNCN 2%"
+                                    value={newVarForm.desc}
+                                    onChange={(e) => setNewVarForm({ ...newVarForm, desc: e.target.value })}
+                                    className="border border-gray-200 rounded-lg px-2 py-1 text-xs w-40 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                  />
+                                </div>
+                                <button type="button" onClick={addCustomVar} className="px-3 py-1 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700">
+                                  Thêm
+                                </button>
+                                <button type="button" onClick={() => { setShowAddVar(false); setNewVarForm({ label: '', value: '', desc: '' }); }} className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700">
+                                  Hủy
+                                </button>
+                              </div>
+                              <p className="text-[10px] text-indigo-500 mt-1.5">
+                                💡 Ví dụ: Thuế = 0.02 (2%), rồi dùng trong công thức: <code>base_salary × thuế</code>
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Custom vars list */}
+                          {customVars.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <span className="text-[10px] text-gray-400 self-center">Biến tùy chỉnh:</span>
+                              {customVars.map(v => (
+                                <span key={v.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                  {v.label} = {v.value}
+                                  <button type="button" onClick={() => removeCustomVar(v.id)} className="text-indigo-400 hover:text-red-500">
                                     <X className="w-3 h-3" />
                                   </button>
-                                </div>
-                              </React.Fragment>
-                            );
-                          })}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <div className="mt-2">
-                      <p className="text-[11px] text-gray-500 font-medium mb-1.5">
-                        Mẫu công thức nhanh:
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          {
-                            label: "Theo giờ + OT",
-                            nodes: [
-                              {
-                                uid: "wh-1",
-                                blockId: "working_hours",
-                                operator: "+" as const,
-                              },
-                              {
-                                uid: "hr-1",
-                                blockId: "hourly_rate",
-                                operator: "×" as const,
-                              },
-                              {
-                                uid: "oth-1",
-                                blockId: "ot_hours",
-                                operator: "+" as const,
-                              },
-                              {
-                                uid: "otm-1",
-                                blockId: "ot_multiplier",
-                                operator: "×" as const,
-                              },
-                              {
-                                uid: "hr-2",
-                                blockId: "hourly_rate",
-                                operator: "×" as const,
-                              },
-                            ],
-                          },
-                          {
-                            label: "Theo ngày công",
-                            nodes: [
-                              {
-                                uid: "pd-1",
-                                blockId: "present_days",
-                                operator: "+" as const,
-                              },
-                              {
-                                uid: "dr-1",
-                                blockId: "daily_rate",
-                                operator: "×" as const,
-                              },
-                              {
-                                uid: "al-1",
-                                blockId: "allowances",
-                                operator: "+" as const,
-                              },
-                            ],
-                          },
-                          {
-                            label: "Lương cố định + phụ cấp",
-                            nodes: [
-                              {
-                                uid: "bs-1",
-                                blockId: "base_salary",
-                                operator: "+" as const,
-                              },
-                              {
-                                uid: "al-2",
-                                blockId: "allowances",
-                                operator: "+" as const,
-                              },
-                              {
-                                uid: "ded-1",
-                                blockId: "deductions",
-                                operator: "-" as const,
-                              },
-                            ],
-                          },
-                        ].map((tpl) => (
-                          <button
-                            key={tpl.label}
-                            type="button"
-                            onClick={() => setFormulaNodes(tpl.nodes)}
-                            className="px-2.5 py-1 text-xs rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all"
-                          >
-                            {tpl.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
 
-                  {/* CUSTOM EXPRESSION INPUT */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide flex items-center gap-1.5 mb-2">
-                      ✏️ Công thức tùy chỉnh (nâng cao)
-                    </h3>
-                    <p className="text-[11px] text-gray-500 mb-2">
-                      Nhập công thức dạng text với các biến: <code className="bg-gray-100 px-1 rounded text-[10px]">working_hours</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">present_days</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">hourly_rate</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">daily_rate</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">base_salary</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">ot_hours</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">ot_multiplier</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">allowances</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">late_days</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">late_penalty_rate</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">deductions</code>. Hỗ trợ +, -, *, /, ( ).
-                    </p>
-                    <input
-                      type="text"
-                      placeholder="VD: working_hours * hourly_rate + ot_hours * ot_multiplier * hourly_rate"
-                      value={presetForm.customExpression}
-                      onChange={(e) =>
-                        setPresetForm({
-                          ...presetForm,
-                          customExpression: e.target.value,
-                        })
-                      }
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
-                    />
-                    {presetForm.customExpression && (
-                      <p className="text-[11px] text-amber-600 mt-1">
-                        ⚠️ Khi có công thức text, kéo-thả bên trên sẽ bị bỏ qua.
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-2 mt-2">
-                      {[
-                        { label: "Theo giờ + OT", expr: "working_hours * hourly_rate + ot_hours * ot_multiplier * hourly_rate" },
-                        { label: "Theo ngày công", expr: "present_days * daily_rate + allowances" },
-                        { label: "Cố định + phụ cấp - trừ", expr: "base_salary + allowances - deductions" },
-                      ].map((tpl) => (
-                        <button
-                          key={tpl.label}
-                          type="button"
-                          onClick={() =>
-                            setPresetForm({
-                              ...presetForm,
-                              customExpression: tpl.expr,
-                            })
-                          }
-                          className="px-2.5 py-1 text-xs rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all"
+                        {/* Drop zone */}
+                        <div
+                          onDragOver={(e) => { e.preventDefault(); setDragOverIndex(formulaNodes.length); }}
+                          onDragLeave={() => setDragOverIndex(null)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const blockId = dragBlockRef.current;
+                            if (!blockId) return;
+                            setFormulaNodes((prev) => [...prev, { uid: `${blockId}-${Date.now()}`, blockId, operator: "+" as const }]);
+                            setDragOverIndex(null);
+                            dragBlockRef.current = null;
+                          }}
+                          className={`min-h-20 rounded-xl border-2 border-dashed p-3 transition-all ${dragOverIndex !== null ? "border-emerald-400 bg-emerald-50" : "border-gray-200 bg-gray-50"}`}
                         >
-                          {tpl.label}
-                        </button>
-                      ))}
-                    </div>
+                          {formulaNodes.length === 0 ? (
+                            <div className="flex items-center justify-center h-16 text-sm text-gray-400">
+                              Kéo khối dữ liệu vào đây để xây công thức...
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {formulaNodes.map((node, idx) => {
+                                const blk = FORMULA_BLOCKS.find((b) => b.id === node.blockId);
+                                const isParen = node.blockId === "(" || node.blockId === ")";
+                                return (
+                                  <React.Fragment key={node.uid}>
+                                    {idx > 0 && !isParen && node.blockId !== ")" && (formulaNodes[idx - 1]?.blockId !== "(") && (
+                                      <select
+                                        value={node.operator}
+                                        onChange={(e) => {
+                                          const op = e.target.value as FormulaNode["operator"];
+                                          setFormulaNodes((prev) => prev.map((n, i) => i === idx ? { ...n, operator: op } : n));
+                                        }}
+                                        className="w-10 text-center text-sm font-bold text-gray-700 border border-gray-300 rounded-lg py-1 focus:ring-2 focus:ring-emerald-500 outline-none bg-white"
+                                      >
+                                        <option value="+">+</option>
+                                        <option value="-">−</option>
+                                        <option value="×">×</option>
+                                        <option value="÷">÷</option>
+                                      </select>
+                                    )}
+                                    {isParen ? (
+                                      <div className="flex items-center">
+                                        <span className="text-lg font-bold text-gray-500 px-1">{node.blockId}</span>
+                                        <button type="button" onClick={() => setFormulaNodes((prev) => prev.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-400 ml-0.5"><X className="w-3 h-3" /></button>
+                                      </div>
+                                    ) : (
+                                      <div className={`group relative flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium ${blk ? blockColorMap[blk.color] : "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                                        <span>{blk?.label ?? node.blockId}</span>
+                                        <button type="button" onClick={() => setFormulaNodes((prev) => prev.filter((_, i) => i !== idx))} className="ml-1 text-current opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
+                                        {/* Hover tooltip */}
+                                        {blk && (
+                                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 text-white text-[10px] rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                                            {blk.desc} = {(SAMPLE_VARS[blk.id] ?? 0).toLocaleString("vi-VN")}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                              <button type="button" onClick={() => setFormulaNodes([])} className="ml-2 text-[10px] text-red-400 hover:text-red-600">Xóa tất cả</button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Validation error */}
+                        {formulaNodes.length > 0 && validateFormula(formulaNodes) && (
+                          <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
+                            ⚠️ {validateFormula(formulaNodes)}
+                          </p>
+                        )}
+
+                        {/* Quick templates */}
+                        <div className="mt-2">
+                          <p className="text-[11px] text-gray-500 font-medium mb-1.5">
+                            Mẫu công thức nhanh:
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              {
+                                label: "Theo giờ + OT",
+                                nodes: [
+                                  { uid: "wh-1", blockId: "working_hours", operator: "+" as const },
+                                  { uid: "hr-1", blockId: "hourly_rate", operator: "×" as const },
+                                  { uid: "oth-1", blockId: "ot_hours", operator: "+" as const },
+                                  { uid: "otm-1", blockId: "ot_multiplier", operator: "×" as const },
+                                  { uid: "hr-2", blockId: "hourly_rate", operator: "×" as const },
+                                ],
+                              },
+                              {
+                                label: "Theo ngày công",
+                                nodes: [
+                                  { uid: "pd-1", blockId: "present_days", operator: "+" as const },
+                                  { uid: "dr-1", blockId: "daily_rate", operator: "×" as const },
+                                  { uid: "al-1", blockId: "allowances", operator: "+" as const },
+                                ],
+                              },
+                              {
+                                label: "Cố định + phụ cấp",
+                                nodes: [
+                                  { uid: "bs-1", blockId: "base_salary", operator: "+" as const },
+                                  { uid: "al-2", blockId: "allowances", operator: "+" as const },
+                                  { uid: "ded-1", blockId: "deductions", operator: "-" as const },
+                                ],
+                              },
+                            ].map((tpl) => (
+                              <button
+                                key={tpl.label}
+                                type="button"
+                                onClick={() => setFormulaNodes(tpl.nodes)}
+                                className="px-2.5 py-1 text-xs rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all"
+                              >
+                                {tpl.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Auto-generated expression preview */}
+                        {formulaNodes.length > 0 && !validateFormula(formulaNodes) && (
+                          <div className="mt-2 bg-gray-50 rounded-lg p-2 border border-gray-200">
+                            <p className="text-[10px] text-gray-400 mb-1">Expression tự động:</p>
+                            <code className="text-xs text-gray-600 font-mono">{nodesToExpression(formulaNodes)}</code>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      /* TEXT mode — advanced */
+                      <div>
+                        <p className="text-[11px] text-gray-500 mb-2">
+                          Nhập công thức dạng text. Hỗ trợ <strong>+, -, *, /, ( )</strong>. Biến khả dụng:
+                        </p>
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {FORMULA_BLOCKS.map((blk) => (
+                            <button
+                              key={blk.id}
+                              type="button"
+                              onClick={() => {
+                                const el = document.getElementById("custom-expr-input") as HTMLInputElement;
+                                if (el) {
+                                  const pos = el.selectionStart ?? el.value.length;
+                                  const val = el.value;
+                                  const newVal = val.slice(0, pos) + blk.id + val.slice(pos);
+                                  setPresetForm(f => ({...f, customExpression: newVal}));
+                                  setTimeout(() => { el.focus(); el.setSelectionRange(pos + blk.id.length, pos + blk.id.length); }, 0);
+                                }
+                              }}
+                              className={`group relative px-2 py-0.5 rounded text-[10px] font-medium border cursor-pointer transition-all ${blockColorMap[blk.color]}`}
+                            >
+                              {blk.label}
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-[10px] rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
+                                <code>{blk.id}</code> — {blk.desc}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <input
+                          id="custom-expr-input"
+                          type="text"
+                          placeholder="VD: working_hours * hourly_rate + ot_hours * ot_multiplier * hourly_rate"
+                          value={presetForm.customExpression}
+                          onChange={(e) => setPresetForm({...presetForm, customExpression: e.target.value})}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none"
+                        />
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {[
+                            { label: "Theo giờ + OT", expr: "working_hours * hourly_rate + ot_hours * ot_multiplier * hourly_rate" },
+                            { label: "Theo ngày công", expr: "present_days * daily_rate + allowances" },
+                            { label: "Cố định + phụ cấp", expr: "base_salary + allowances - deductions" },
+                            { label: "Giờ + OT (có ngoặc)", expr: "(working_hours * hourly_rate) + (ot_hours * ot_multiplier * hourly_rate) + allowances - deductions" },
+                          ].map((tpl) => (
+                            <button
+                              key={tpl.label}
+                              type="button"
+                              onClick={() => setPresetForm({...presetForm, customExpression: tpl.expr})}
+                              className="px-2.5 py-1 text-xs rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all"
+                            >
+                              {tpl.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* LIVE PREVIEW — shows sample calculation result */}
+                    {(() => {
+                      const expr = getEffectiveExpression();
+                      const previewResult = expr ? evalExpressionPreview(expr) : null;
+                      if (previewResult === null) return null;
+                      return (
+                        <div className="mt-3 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-4 border border-emerald-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide">
+                              📊 Xem trước kết quả (dữ liệu mẫu)
+                            </p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 mb-3">
+                            <div className="text-[11px] text-gray-600 space-y-0.5">
+                              <div>Giờ làm: <strong>{SAMPLE_VARS.working_hours}h</strong> ({(SAMPLE_VARS.working_hours / 8).toFixed(1)} ngày)</div>
+                              <div>Lương CB: <strong>{SAMPLE_VARS.base_salary.toLocaleString("vi-VN")}đ</strong></div>
+                              <div>Lương/giờ: <strong>{Math.round(SAMPLE_VARS.hourly_rate).toLocaleString("vi-VN")}đ</strong></div>
+                            </div>
+                            <div className="text-[11px] text-gray-600 space-y-0.5">
+                              <div>OT: <strong>{SAMPLE_VARS.ot_hours}h</strong> (×{SAMPLE_VARS.ot_multiplier})</div>
+                              <div>Phụ cấp: <strong>{SAMPLE_VARS.allowances.toLocaleString("vi-VN")}đ</strong></div>
+                              <div>Ngày trễ: <strong>{SAMPLE_VARS.late_days}</strong></div>
+                            </div>
+                          </div>
+                          <div className="bg-white rounded-lg p-3 border border-emerald-100">
+                            <p className="text-xs text-gray-500 mb-1">Nhân viên mẫu sẽ nhận:</p>
+                            <p className="text-2xl font-bold text-emerald-700">
+                              {Math.round(previewResult).toLocaleString("vi-VN")}đ
+                            </p>
+                            <p className="text-[10px] text-gray-400 mt-1 font-mono">
+                              {expr}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* PARAMS */}
@@ -2115,6 +2617,63 @@ export default function SalaryManagement() {
             preset mặc định.
           </p>
 
+          {/* Assign filters */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[200px] max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Tìm tên, mã NV..."
+                value={assignSearch}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setAssignSearch(val);
+                  if (assignSearchTimerRef.current) clearTimeout(assignSearchTimerRef.current);
+                  assignSearchTimerRef.current = setTimeout(() => { setAssignPage(1); }, 400);
+                }}
+                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+              />
+              {assignSearch && (
+                <button onClick={() => { setAssignSearch(""); setAssignPage(1); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-gray-400" />
+              <select
+                value={assignDeptFilter}
+                onChange={(e) => { setAssignDeptFilter(e.target.value); setAssignPage(1); }}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+              >
+                <option value="">Tất cả phòng ban</option>
+                {availableDepts.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <select
+                value={assignPresetFilter}
+                onChange={(e) => { setAssignPresetFilter(e.target.value); setAssignPage(1); }}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+              >
+                <option value="">Tất cả preset</option>
+                <option value="__none__">Chưa gán</option>
+                {presets.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            {(assignSearch || assignDeptFilter || assignPresetFilter) && (
+              <button
+                onClick={() => { setAssignSearch(""); setAssignDeptFilter(""); setAssignPresetFilter(""); setAssignPage(1); }}
+                className="text-xs text-red-500 hover:text-red-700 font-medium"
+              >
+                Xóa bộ lọc
+              </button>
+            )}
+          </div>
+
           <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
             <Pagination
               page={assignPage}
@@ -2144,7 +2703,12 @@ export default function SalaryManagement() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {employees.map((emp) => {
+                {employees.filter((emp) => {
+                  if (!assignPresetFilter) return true;
+                  const current = assignments.find((a) => a.employeeId === emp.id);
+                  if (assignPresetFilter === "__none__") return !current;
+                  return current?.presetId === assignPresetFilter;
+                }).map((emp) => {
                   const current = assignments.find(
                     (a) => a.employeeId === emp.id,
                   );
