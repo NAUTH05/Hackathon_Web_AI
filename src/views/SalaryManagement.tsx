@@ -220,6 +220,7 @@ export default function SalaryManagement() {
     includeAllowances: true,
     includeDeductions: true,
     includeLatePenalty: true,
+    customExpression: "",
   });
 
   // Drag-and-drop formula builder
@@ -237,9 +238,9 @@ export default function SalaryManagement() {
     },
     {
       id: "present_days",
-      label: "Ngày công (≥8h)",
+      label: "Ngày công",
       color: "green",
-      desc: "Số ngày làm đủ 8 tiếng",
+      desc: "Số ngày có chấm công (check-in) trong tháng",
     },
     {
       id: "hourly_rate",
@@ -611,6 +612,7 @@ export default function SalaryManagement() {
       includeAllowances: true,
       includeDeductions: true,
       includeLatePenalty: true,
+      customExpression: "",
     });
     setEditingPresetId(null);
     setFormulaNodes([]);
@@ -634,6 +636,7 @@ export default function SalaryManagement() {
       includeAllowances: cfg.includeAllowances,
       includeDeductions: cfg.includeDeductions,
       includeLatePenalty: cfg.includeLatePenalty,
+      customExpression: cfg.customExpression ?? "",
     });
     setEditingPresetId(p.id);
     try {
@@ -661,6 +664,7 @@ export default function SalaryManagement() {
       includeDeductions: presetForm.includeDeductions,
       includeLatePenalty: presetForm.includeLatePenalty,
       formulaNodes: formulaNodes,
+      customExpression: presetForm.customExpression || undefined,
     });
     const payload = {
       name: presetForm.name,
@@ -746,6 +750,7 @@ export default function SalaryManagement() {
         workDaysPerMonth: c.workDaysPerMonth
           ? parseInt(c.workDaysPerMonth)
           : 22,
+        customExpression: c.customExpression || "",
       };
     } catch {
       return {
@@ -758,6 +763,7 @@ export default function SalaryManagement() {
         includeLatePenalty: true,
         hourlyRate: 0,
         workDaysPerMonth: 22,
+        customExpression: "",
       };
     }
   }
@@ -1461,9 +1467,9 @@ export default function SalaryManagement() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {presets.map((p) => {
-              const assignedCount = assignments.filter(
-                (a) => a.presetId === p.id,
-              ).length;
+              const assignedCount =
+                (p as any).usedByCount ??
+                assignments.filter((a) => a.presetId === p.id).length;
               return (
                 <div
                   key={p.id}
@@ -1539,6 +1545,11 @@ export default function SalaryManagement() {
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700">
                           {basisLabel}
                         </span>
+                        {cfg.customExpression && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-100 text-indigo-700" title={cfg.customExpression}>
+                            📐 Công thức tùy chỉnh
+                          </span>
+                        )}
                         {cfg.includeOT && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700">
                             OT ×{cfg.otMultiplier}
@@ -1910,6 +1921,54 @@ export default function SalaryManagement() {
                           </button>
                         ))}
                       </div>
+                    </div>
+                  </div>
+
+                  {/* CUSTOM EXPRESSION INPUT */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide flex items-center gap-1.5 mb-2">
+                      ✏️ Công thức tùy chỉnh (nâng cao)
+                    </h3>
+                    <p className="text-[11px] text-gray-500 mb-2">
+                      Nhập công thức dạng text với các biến: <code className="bg-gray-100 px-1 rounded text-[10px]">working_hours</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">present_days</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">hourly_rate</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">daily_rate</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">base_salary</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">ot_hours</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">ot_multiplier</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">allowances</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">late_days</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">late_penalty_rate</code>, <code className="bg-gray-100 px-1 rounded text-[10px]">deductions</code>. Hỗ trợ +, -, *, /, ( ).
+                    </p>
+                    <input
+                      type="text"
+                      placeholder="VD: working_hours * hourly_rate + ot_hours * ot_multiplier * hourly_rate"
+                      value={presetForm.customExpression}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          customExpression: e.target.value,
+                        })
+                      }
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                    {presetForm.customExpression && (
+                      <p className="text-[11px] text-amber-600 mt-1">
+                        ⚠️ Khi có công thức text, kéo-thả bên trên sẽ bị bỏ qua.
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {[
+                        { label: "Theo giờ + OT", expr: "working_hours * hourly_rate + ot_hours * ot_multiplier * hourly_rate" },
+                        { label: "Theo ngày công", expr: "present_days * daily_rate + allowances" },
+                        { label: "Cố định + phụ cấp - trừ", expr: "base_salary + allowances - deductions" },
+                      ].map((tpl) => (
+                        <button
+                          key={tpl.label}
+                          type="button"
+                          onClick={() =>
+                            setPresetForm({
+                              ...presetForm,
+                              customExpression: tpl.expr,
+                            })
+                          }
+                          className="px-2.5 py-1 text-xs rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-all"
+                        >
+                          {tpl.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
 

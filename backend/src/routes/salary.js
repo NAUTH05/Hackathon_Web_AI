@@ -10,7 +10,33 @@ const { toCamelCase, toCamelCaseArray, logAudit } = require('../helpers');
 router.get('/presets', authenticate, async (req, res) => {
   try {
     const [rows] = await pool.execute('SELECT * FROM salary_presets ORDER BY created_at DESC');
-    res.json(toCamelCaseArray(rows));
+
+    // Count employees per preset (including default fallback)
+    const [totalActive] = await pool.execute('SELECT COUNT(*) AS cnt FROM employees WHERE is_active = 1');
+    const totalActiveCount = totalActive[0].cnt;
+    const [assignCounts] = await pool.execute(
+      `SELECT esa.preset_id, COUNT(*) AS cnt
+       FROM employee_salary_assignments esa
+       JOIN employees e ON e.id = esa.employee_id AND e.is_active = 1
+       GROUP BY esa.preset_id`
+    );
+    const countMap = new Map();
+    let totalExplicitlyAssigned = 0;
+    for (const ac of assignCounts) {
+      countMap.set(ac.preset_id, parseInt(ac.cnt));
+      totalExplicitlyAssigned += parseInt(ac.cnt);
+    }
+
+    const result = toCamelCaseArray(rows).map(p => {
+      let usedByCount = countMap.get(p.id) || 0;
+      // Default preset also covers employees without explicit assignment
+      if (p.isDefault) {
+        usedByCount += (totalActiveCount - totalExplicitlyAssigned);
+      }
+      return { ...p, usedByCount };
+    });
+
+    res.json(result);
   } catch (err) {
     console.error('Get salary presets error:', err);
     res.status(500).json({ error: 'Lỗi server' });
@@ -419,13 +445,14 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
           includeDeductions: c.includeDeductions !== false,
           includeLatePenalty: c.includeLatePenalty !== false,
           formulaNodes: Array.isArray(c.formulaNodes) ? c.formulaNodes : [],
+          customExpression: c.customExpression || null,
         };
       } catch {
-        return { salaryBasis: 'hourly', hourlyRate: null, workDaysPerMonth: 22, otMultiplier: 1.5, latePenaltyPerDay: 50000, includeOT: true, includeAllowances: true, includeDeductions: true, includeLatePenalty: true, formulaNodes: [] };
+        return { salaryBasis: 'hourly', hourlyRate: null, workDaysPerMonth: 22, otMultiplier: 1.5, latePenaltyPerDay: 50000, includeOT: true, includeAllowances: true, includeDeductions: true, includeLatePenalty: true, formulaNodes: [], customExpression: null };
       }
     }
 
-    // Evaluate a drag-drop formula left-to-right
+    // Evaluate a drag-drop formula with proper operator precedence (× ÷ before + -)
     function evaluateFormula(nodes, vars) {
       if (!nodes || nodes.length === 0) return null;
       const valueOf = (blockId) => {
@@ -444,17 +471,109 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
           default: return 0;
         }
       };
-      let result = valueOf(nodes[0].blockId);
-      for (let i = 1; i < nodes.length; i++) {
-        const val = valueOf(nodes[i].blockId);
-        switch (nodes[i].operator) {
-          case '+': result = result + val; break;
-          case '-': result = result - val; break;
-          case '×': result = result * val; break;
-          case '÷': result = val !== 0 ? result / val : 0; break;
+
+      // Build terms: group consecutive × ÷ operations into products
+      // then combine with + - (respecting precedence)
+      const values = nodes.map(n => valueOf(n.blockId));
+      const ops = nodes.map(n => n.operator); // ops[0] is unused (first node)
+
+      // First pass: resolve × and ÷ into grouped terms
+      const terms = [values[0]];
+      const termOps = []; // + or - between terms
+      for (let i = 1; i < values.length; i++) {
+        const op = ops[i];
+        if (op === '×' || op === '*') {
+          terms[terms.length - 1] *= values[i];
+        } else if (op === '÷' || op === '/') {
+          terms[terms.length - 1] = values[i] !== 0 ? terms[terms.length - 1] / values[i] : 0;
+        } else {
+          // + or -: start a new term
+          termOps.push(op);
+          terms.push(values[i]);
         }
       }
+
+      // Second pass: combine terms with + and -
+      let result = terms[0];
+      for (let i = 0; i < termOps.length; i++) {
+        if (termOps[i] === '+') result += terms[i + 1];
+        else if (termOps[i] === '-') result -= terms[i + 1];
+      }
       return Math.max(0, result);
+    }
+
+    // Safe expression parser for custom text formulas
+    // Supports: variables, numbers, +, -, *, /, (, )
+    function evaluateExpression(expr, vars) {
+      if (!expr || typeof expr !== 'string') return null;
+
+      // Tokenize
+      const tokens = [];
+      let i = 0;
+      const s = expr.replace(/\s+/g, '');
+      while (i < s.length) {
+        if ('+-*/()'.includes(s[i])) {
+          tokens.push({ type: 'op', value: s[i] });
+          i++;
+        } else if (/[0-9.]/.test(s[i])) {
+          let num = '';
+          while (i < s.length && /[0-9.]/.test(s[i])) { num += s[i]; i++; }
+          tokens.push({ type: 'num', value: parseFloat(num) || 0 });
+        } else if (/[a-z_]/i.test(s[i])) {
+          let name = '';
+          while (i < s.length && /[a-z_0-9]/i.test(s[i])) { name += s[i]; i++; }
+          const val = vars.hasOwnProperty(name) ? vars[name] : 0;
+          tokens.push({ type: 'num', value: val });
+        } else {
+          i++; // skip unknown chars
+        }
+      }
+
+      // Recursive descent parser
+      let pos = 0;
+      function peek() { return pos < tokens.length ? tokens[pos] : null; }
+      function consume() { return tokens[pos++]; }
+
+      function parseExpr() {
+        let left = parseTerm();
+        while (peek() && (peek().value === '+' || peek().value === '-')) {
+          const op = consume().value;
+          const right = parseTerm();
+          left = op === '+' ? left + right : left - right;
+        }
+        return left;
+      }
+
+      function parseTerm() {
+        let left = parseFactor();
+        while (peek() && (peek().value === '*' || peek().value === '/')) {
+          const op = consume().value;
+          const right = parseFactor();
+          left = op === '*' ? left * right : (right !== 0 ? left / right : 0);
+        }
+        return left;
+      }
+
+      function parseFactor() {
+        const tok = peek();
+        if (!tok) return 0;
+        if (tok.type === 'num') { consume(); return tok.value; }
+        if (tok.value === '(') {
+          consume(); // skip (
+          const val = parseExpr();
+          if (peek() && peek().value === ')') consume(); // skip )
+          return val;
+        }
+        if (tok.value === '-') {
+          consume();
+          return -parseFactor();
+        }
+        consume(); // skip unexpected token
+        return 0;
+      }
+
+      const result = parseExpr();
+      return Math.max(0, isNaN(result) ? 0 : result);
     }
 
     // Build batch insert values
@@ -481,8 +600,8 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
       // Use actual worked hours if available, fall back to timesheet
       const hoursData = hoursMap.get(emp.emp_id) || {};
       const actualWorkedHours = hoursData.totalHours || 0;
-      // Work days = days where employee worked >= 8h (proper logic per user requirement)
-      const presentDays = hoursData.fullWorkDays || timesheet.present_days || 0;
+      // Present days = any day where employee checked in (not just >=8h days)
+      const presentDays = hoursData.presentDays || timesheet.present_days || 0;
 
       const standardHoursPerDay = 8;
       // If preset defines explicit hourly rate, use it; otherwise derive from monthly salary
@@ -497,21 +616,36 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
 
       let grossSalary, netSalary, otPay, allowancePay, latePenalty, deductionsPay;
 
-      if (config.formulaNodes && config.formulaNodes.length > 0) {
-        // Drag-drop formula mode: evaluate entire formula as gross salary
-        const formulaVars = {
-          working_hours: actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay),
-          present_days: presentDays,
-          hourly_rate: hourlyRate,
-          daily_rate: dailyRate,
-          base_salary: baseSalary,
-          ot_hours: totalOtHours,
-          ot_multiplier: config.otMultiplier,
-          allowances: allowances,
-          late_days: lateDays,
-          late_penalty_rate: config.latePenaltyPerDay,
-          deductions: rawDeductions,
-        };
+      const formulaVars = {
+        working_hours: actualWorkedHours > 0 ? actualWorkedHours : (presentDays * standardHoursPerDay),
+        present_days: presentDays,
+        hourly_rate: hourlyRate,
+        daily_rate: dailyRate,
+        base_salary: baseSalary,
+        ot_hours: totalOtHours,
+        ot_multiplier: config.otMultiplier,
+        allowances: allowances,
+        late_days: lateDays,
+        late_penalty_rate: config.latePenaltyPerDay,
+        deductions: rawDeductions,
+      };
+
+      if (config.customExpression) {
+        // Custom text expression mode (supports operator precedence + parentheses)
+        grossSalary = evaluateExpression(config.customExpression, formulaVars);
+        const expr = config.customExpression;
+        const hasOT = /ot_hours/.test(expr);
+        const hasAllowances = /allowances/.test(expr);
+        const hasLatePenalty = /late_days|late_penalty_rate/.test(expr);
+        const hasDeductions = /deductions/.test(expr);
+        otPay = hasOT ? 0 : (config.includeOT ? (totalOtHours * hourlyRate * config.otMultiplier) : 0);
+        allowancePay = hasAllowances ? 0 : (config.includeAllowances ? allowances : 0);
+        latePenalty = hasLatePenalty ? 0 : (config.includeLatePenalty ? (lateDays * config.latePenaltyPerDay) : 0);
+        deductionsPay = hasDeductions ? 0 : (config.includeDeductions ? rawDeductions : 0);
+        grossSalary = grossSalary + otPay + allowancePay;
+        netSalary = grossSalary - deductionsPay - latePenalty;
+      } else if (config.formulaNodes && config.formulaNodes.length > 0) {
+        // Drag-drop formula mode: evaluate with proper operator precedence
         grossSalary = evaluateFormula(config.formulaNodes, formulaVars);
         // Don't double-count components already inside the formula
         const hasOT = config.formulaNodes.some(n => n.blockId === 'ot_hours');
