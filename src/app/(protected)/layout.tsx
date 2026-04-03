@@ -1,5 +1,6 @@
 "use client";
 
+import ChatBox from "@/components/ChatBox";
 import Layout from "@/components/Layout";
 import ToastContainer from "@/components/Toast";
 import { useAuth } from "@/contexts/AuthContext";
@@ -26,6 +27,8 @@ export default function ProtectedLayout({
     <>
       <Layout>{children}</Layout>
       <ToastContainer />
+      <ChatBox />
     </>
   );
 }
+

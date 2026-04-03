@@ -77,3 +77,44 @@ body {
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+/* ChatBox markdown styles */
+.chatbox-markdown p {
+  margin: 0.25em 0;
+}
+.chatbox-markdown p:first-child {
+  margin-top: 0;
+}
+.chatbox-markdown p:last-child {
+  margin-bottom: 0;
+}
+.chatbox-markdown ul,
+.chatbox-markdown ol {
+  margin: 0.25em 0;
+  padding-left: 1.25em;
+}
+.chatbox-markdown li {
+  margin: 0.1em 0;
+}
+.chatbox-markdown strong {
+  font-weight: 600;
+}
+.chatbox-markdown code {
+  @apply bg-gray-100 text-primary-700 px-1 py-0.5 rounded text-xs;
+}
+.chatbox-markdown pre {
+  @apply bg-gray-100 rounded-lg p-2 my-1 overflow-x-auto;
+}
+.chatbox-markdown pre code {
+  @apply bg-transparent p-0;
+}
+.chatbox-markdown a {
+  @apply text-primary-600 underline;
+}
+.chatbox-markdown h1,
+.chatbox-markdown h2,
+.chatbox-markdown h3 {
+  @apply font-semibold mt-2 mb-1;
+  font-size: inherit;
+}
+
