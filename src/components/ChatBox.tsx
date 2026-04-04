@@ -1,6 +1,7 @@
 "use client";
 
 import { MessageCircle, Send, X, Bot, User } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -22,6 +23,7 @@ export default function ChatBox() {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const router = useRouter();
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -201,7 +203,26 @@ export default function ChatBox() {
                 >
                   {msg.role === "model" ? (
                     <div className="chatbox-markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({ node, ...props }) => {
+                            return (
+                              <a
+                                {...props}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  if (props.href) {
+                                    router.push(props.href);
+                                    setIsOpen(false);
+                                  }
+                                }}
+                                className="cursor-pointer hover:underline font-bold text-primary-600"
+                              />
+                            );
+                          },
+                        }}
+                      >
                         {msg.text}
                       </ReactMarkdown>
                     </div>
