@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircle, Send, X, Bot, User } from "lucide-react";
+import { Bot, MessageCircle, Send, User, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -69,10 +69,7 @@ export default function ChatBox() {
       const data = await res.json();
 
       if (res.ok && data.reply) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "model", text: data.reply },
-        ]);
+        setMessages((prev) => [...prev, { role: "model", text: data.reply }]);
       } else {
         setMessages((prev) => [
           ...prev,
@@ -130,7 +127,7 @@ export default function ChatBox() {
               </div>
               <div>
                 <p className="text-sm font-semibold leading-tight">
-                  TimeKeeper Assistant
+                  AquaFlow HRM System Assistant
                 </p>
                 <p className="text-[10px] text-primary-100 leading-tight">
                   Hướng dẫn sử dụng hệ thống
@@ -157,7 +154,8 @@ export default function ChatBox() {
                   Xin chào! 👋
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  Tôi có thể giúp bạn tìm hiểu cách sử dụng hệ thống TimeKeeper.
+                  Tôi có thể giúp bạn tìm hiểu cách sử dụng hệ thống AquaFlow
+                  HRM System.
                 </p>
                 <div className="mt-4 space-y-1.5">
                   {[
@@ -246,9 +244,18 @@ export default function ChatBox() {
                 </div>
                 <div className="bg-white text-gray-500 border border-gray-200 px-3 py-2 rounded-xl rounded-bl-sm shadow-sm text-[13px]">
                   <span className="inline-flex gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                    <span
+                      className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                      style={{ animationDelay: "0ms" }}
+                    />
+                    <span
+                      className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                      style={{ animationDelay: "150ms" }}
+                    />
+                    <span
+                      className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                      style={{ animationDelay: "300ms" }}
+                    />
                   </span>
                 </div>
               </div>

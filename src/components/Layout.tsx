@@ -214,7 +214,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
             <div>
               <span className="text-sm font-bold text-gray-900 block leading-tight">
-                TimeKeeper
+                AquaFlow HRM System
               </span>
               <span className="text-[10px] text-gray-400 leading-tight">
                 Workforce Management
@@ -383,7 +383,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white">
             <Clock className="w-3.5 h-3.5" />
           </div>
-          <span className="text-sm font-bold text-gray-900">TimeKeeper</span>
+          <span className="text-sm font-bold text-gray-900">
+            AquaFlow HRM System
+          </span>
         </div>
         <Link href="/profile" className="p-2 rounded-lg hover:bg-gray-100">
           <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden">

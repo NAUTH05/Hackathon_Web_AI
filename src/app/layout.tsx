@@ -11,7 +11,7 @@ export default function RootLayout({
   return (
     <html lang="vi">
       <head>
-        <title>TimeKeeper - Cham Cong</title>
+        <title>AquaFlow HRM System</title>
         <meta name="description" content="He thong cham cong nhan vien" />
       </head>
       <body>
