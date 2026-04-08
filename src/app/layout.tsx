@@ -12,7 +12,7 @@ export default function RootLayout({
     <html lang="vi">
       <head>
         <title>AquaFlow HRM System</title>
-        <meta name="description" content="He thong cham cong nhan vien" />
+        <meta name="description" content="Hệ thống quản lý nhân sự AquaFlow" />
       </head>
       <body>
         <AuthProvider>{children}</AuthProvider>
