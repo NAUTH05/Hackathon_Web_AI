@@ -50,8 +50,17 @@ router.get('/', authenticate, async (req, res) => {
     }
 
     if (req.query.status) {
-      params.push(req.query.status);
-      where += ` AND ar.status = ?`;
+      if (req.query.status === 'no-checkout') {
+        where += ` AND ar.check_in_time IS NOT NULL AND ar.check_out_time IS NULL`;
+      } else {
+        params.push(req.query.status);
+        where += ` AND ar.status = ?`;
+      }
+    }
+
+    if (req.query.search) {
+      params.push(`%${req.query.search}%`);
+      where += ` AND ar.employee_name LIKE ?`;
     }
 
     const page = Math.max(1, parseInt(req.query.page) || 1);
@@ -308,6 +317,223 @@ function isMobileDevice(ua) {
   if (!ua) return false;
   return /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini|Mobile|mobile/i.test(ua);
 }
+
+// POST /api/attendance/manual — admin/level2 create attendance manually
+router.post('/manual', authenticate, async (req, res) => {
+  try {
+    const level = req.user.roleLevel || 5;
+    if (req.user.role !== 'admin' && level > 2) {
+      return res.status(403).json({ error: 'Chỉ Admin hoặc cấp Giám đốc mới được chấm công thủ công' });
+    }
+
+    const { employeeId, date, shiftId, checkInTime, checkOutTime, status, note } = req.body;
+    if (!employeeId || !date) {
+      return res.status(400).json({ error: 'Thiếu employeeId hoặc date' });
+    }
+
+    // Check employee exists
+    const [empRows] = await pool.execute('SELECT id, name FROM employees WHERE id = ? AND is_active = 1', [employeeId]);
+    if (empRows.length === 0) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
+    const employee = empRows[0];
+
+    // Check duplicate
+    const [dup] = await pool.execute('SELECT id FROM attendance_records WHERE employee_id = ? AND date = ?', [employeeId, date]);
+    if (dup.length > 0) return res.status(400).json({ error: 'Nhân viên đã có bản ghi chấm công ngày này' });
+
+    // Resolve shift name
+    let shiftName = null;
+    if (shiftId) {
+      const [shiftRows] = await pool.execute('SELECT name FROM shifts WHERE id = ?', [shiftId]);
+      if (shiftRows.length > 0) shiftName = shiftRows[0].name;
+    }
+
+    // Calculate working hours if both times provided
+    let workingHours = 0;
+    let lateMinutes = 0;
+    let earlyLeaveMinutes = 0;
+    let effectiveStatus = status || 'on-time';
+
+    const ciStr = checkInTime ? `${date} ${checkInTime}` : null;
+    const coStr = checkOutTime ? `${date} ${checkOutTime}` : null;
+
+    if (checkInTime && checkOutTime) {
+      const [ciH, ciM] = checkInTime.split(':').map(Number);
+      const [coH, coM] = checkOutTime.split(':').map(Number);
+      let mins = (coH * 60 + coM) - (ciH * 60 + ciM);
+      // Subtract break if shift exists
+      if (shiftId) {
+        const [sh] = await pool.execute('SELECT break_start_time, break_end_time, start_time, end_time, allow_late_minutes, allow_early_leave_minutes FROM shifts WHERE id = ?', [shiftId]);
+        if (sh.length > 0) {
+          const shift = sh[0];
+          if (shift.break_start_time && shift.break_end_time) {
+            const [bsH, bsM] = shift.break_start_time.split(':').map(Number);
+            const [beH, beM] = shift.break_end_time.split(':').map(Number);
+            mins -= ((beH * 60 + beM) - (bsH * 60 + bsM));
+          }
+          // Calculate late
+          if (shift.start_time) {
+            const [sH, sM] = shift.start_time.split(':').map(Number);
+            lateMinutes = Math.max(0, (ciH * 60 + ciM) - (sH * 60 + sM));
+            if (lateMinutes > (parseInt(shift.allow_late_minutes) || 15)) {
+              effectiveStatus = 'late';
+            }
+          }
+          // Calculate early leave
+          if (shift.end_time) {
+            const [eH, eM] = shift.end_time.split(':').map(Number);
+            earlyLeaveMinutes = Math.max(0, (eH * 60 + eM) - (coH * 60 + coM));
+            if (earlyLeaveMinutes > (parseInt(shift.allow_early_leave_minutes) || 10)) {
+              effectiveStatus = effectiveStatus === 'late' ? 'late' : 'early-leave';
+            }
+          }
+        }
+      }
+      workingHours = Math.max(0, mins / 60).toFixed(2);
+    } else if (checkInTime && !checkOutTime) {
+      effectiveStatus = status || 'on-time';
+    }
+
+    const id = uuidv4();
+    await pool.execute(
+      `INSERT INTO attendance_records (id, employee_id, employee_name, date, shift_id, shift_name, check_in_time, check_out_time, status, late_minutes, early_leave_minutes, working_hours, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, employeeId, employee.name, date, shiftId || null, shiftName, ciStr, coStr, effectiveStatus, lateMinutes, earlyLeaveMinutes, workingHours, note || 'Chấm công thủ công']
+    );
+
+    const [rows] = await pool.execute('SELECT * FROM attendance_records WHERE id = ?', [id]);
+
+    await logAudit({
+      action: 'manual-attendance',
+      performedBy: req.user.name || req.user.username,
+      targetEmployee: employee.name,
+      details: `Chấm công thủ công cho ${employee.name} ngày ${date}`,
+    });
+
+    res.status(201).json(toCamelCase(rows[0]));
+  } catch (err) {
+    console.error('Manual attendance error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/attendance/:id — admin/level2 edit attendance
+router.put('/:id', authenticate, async (req, res) => {
+  try {
+    const level = req.user.roleLevel || 5;
+    if (req.user.role !== 'admin' && level > 2) {
+      return res.status(403).json({ error: 'Chỉ Admin hoặc cấp Giám đốc mới được sửa chấm công' });
+    }
+
+    const { id } = req.params;
+    const [existing] = await pool.execute('SELECT * FROM attendance_records WHERE id = ?', [id]);
+    if (existing.length === 0) return res.status(404).json({ error: 'Không tìm thấy bản ghi' });
+
+    const record = existing[0];
+    const { checkInTime, checkOutTime, shiftId, status, note } = req.body;
+
+    // Resolve new values
+    const date = record.date instanceof Date ? record.date.toISOString().split('T')[0] : String(record.date).split('T')[0];
+    const newCiStr = checkInTime ? `${date} ${checkInTime}` : record.check_in_time;
+    const newCoStr = checkOutTime ? `${date} ${checkOutTime}` : record.check_out_time;
+    const newShiftId = shiftId !== undefined ? shiftId : record.shift_id;
+
+    // Resolve shift name
+    let newShiftName = record.shift_name;
+    if (shiftId !== undefined && shiftId) {
+      const [sr] = await pool.execute('SELECT name FROM shifts WHERE id = ?', [shiftId]);
+      if (sr.length > 0) newShiftName = sr[0].name;
+    }
+
+    // Recalculate working hours & status
+    let workingHours = record.working_hours;
+    let lateMinutes = record.late_minutes;
+    let earlyLeaveMinutes = record.early_leave_minutes;
+    let effectiveStatus = status || record.status;
+
+    const effCi = checkInTime || (record.check_in_time ? (record.check_in_time.includes(' ') ? record.check_in_time.split(' ')[1] : record.check_in_time.split('T')[1]?.replace(/[+Z].*$/, '')) : null);
+    const effCo = checkOutTime || (record.check_out_time ? (record.check_out_time.includes(' ') ? record.check_out_time.split(' ')[1] : record.check_out_time.split('T')[1]?.replace(/[+Z].*$/, '')) : null);
+
+    if (effCi && effCo) {
+      const [ciH, ciM] = effCi.split(':').map(Number);
+      const [coH, coM] = effCo.split(':').map(Number);
+      let mins = (coH * 60 + coM) - (ciH * 60 + ciM);
+
+      if (newShiftId) {
+        const [sh] = await pool.execute('SELECT break_start_time, break_end_time, start_time, end_time, allow_late_minutes, allow_early_leave_minutes FROM shifts WHERE id = ?', [newShiftId]);
+        if (sh.length > 0) {
+          const shift = sh[0];
+          if (shift.break_start_time && shift.break_end_time) {
+            const [bsH, bsM] = shift.break_start_time.split(':').map(Number);
+            const [beH, beM] = shift.break_end_time.split(':').map(Number);
+            mins -= ((beH * 60 + beM) - (bsH * 60 + bsM));
+          }
+          if (shift.start_time && !status) {
+            const [sH, sM] = shift.start_time.split(':').map(Number);
+            lateMinutes = Math.max(0, (ciH * 60 + ciM) - (sH * 60 + sM));
+            effectiveStatus = lateMinutes > (parseInt(shift.allow_late_minutes) || 15) ? 'late' : 'on-time';
+          }
+          if (shift.end_time && !status) {
+            const [eH, eM] = shift.end_time.split(':').map(Number);
+            earlyLeaveMinutes = Math.max(0, (eH * 60 + eM) - (coH * 60 + coM));
+            if (earlyLeaveMinutes > (parseInt(shift.allow_early_leave_minutes) || 10)) {
+              effectiveStatus = effectiveStatus === 'late' ? 'late' : 'early-leave';
+            }
+          }
+        }
+      }
+      workingHours = Math.max(0, mins / 60).toFixed(2);
+    }
+
+    await pool.execute(
+      `UPDATE attendance_records SET check_in_time = ?, check_out_time = ?, shift_id = ?, shift_name = ?,
+       status = ?, late_minutes = ?, early_leave_minutes = ?, working_hours = ?, note = ? WHERE id = ?`,
+      [newCiStr, newCoStr, newShiftId, newShiftName, effectiveStatus, lateMinutes, earlyLeaveMinutes, workingHours, note !== undefined ? note : record.note, id]
+    );
+
+    const [rows] = await pool.execute('SELECT * FROM attendance_records WHERE id = ?', [id]);
+
+    await logAudit({
+      action: 'edit-attendance',
+      performedBy: req.user.name || req.user.username,
+      targetEmployee: record.employee_name,
+      details: `Sửa chấm công ${record.employee_name} ngày ${date}`,
+    });
+
+    res.json(toCamelCase(rows[0]));
+  } catch (err) {
+    console.error('Edit attendance error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// DELETE /api/attendance/:id — admin/level2 delete attendance
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    const level = req.user.roleLevel || 5;
+    if (req.user.role !== 'admin' && level > 2) {
+      return res.status(403).json({ error: 'Chỉ Admin hoặc cấp Giám đốc mới được xóa chấm công' });
+    }
+
+    const { id } = req.params;
+    const [existing] = await pool.execute('SELECT * FROM attendance_records WHERE id = ?', [id]);
+    if (existing.length === 0) return res.status(404).json({ error: 'Không tìm thấy bản ghi' });
+
+    const record = existing[0];
+    await pool.execute('DELETE FROM attendance_records WHERE id = ?', [id]);
+
+    await logAudit({
+      action: 'delete-attendance',
+      performedBy: req.user.name || req.user.username,
+      targetEmployee: record.employee_name,
+      details: `Xóa chấm công ${record.employee_name} ngày ${record.date}`,
+    });
+
+    res.json({ message: 'Đã xóa bản ghi chấm công' });
+  } catch (err) {
+    console.error('Delete attendance error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
 
 // POST /api/attendance/check-in
 router.post('/check-in', authenticate, async (req, res) => {

@@ -134,6 +134,12 @@ export const attendanceApi = {
     request<Record<string, unknown>>('POST', '/attendance/check-in', data),
   checkOut: (data: { employeeId: string; checkOutImage?: string }) =>
     request<Record<string, unknown>>('POST', '/attendance/check-out', data),
+  createManual: (data: Record<string, unknown>) =>
+    request<Record<string, unknown>>('POST', '/attendance/manual', data),
+  update: (id: string, data: Record<string, unknown>) =>
+    request<Record<string, unknown>>('PUT', `/attendance/${encodeURIComponent(id)}`, data),
+  delete: (id: string) =>
+    request<void>('DELETE', `/attendance/${encodeURIComponent(id)}`),
 };
 
 // ============ Overtime ============

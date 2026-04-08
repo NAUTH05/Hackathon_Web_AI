@@ -45,6 +45,7 @@ export default function PenaltyManagement() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [totalActive, setTotalActive] = useState(0);
   const [resolvingAll, setResolvingAll] = useState(false);
   const [confirmResolveAll, setConfirmResolveAll] = useState(false);
   const [confirmCleanup, setConfirmCleanup] = useState(false);
@@ -100,6 +101,12 @@ export default function PenaltyManagement() {
     setPenalties(res.data);
     setTotalPages(res.pagination.totalPages);
     setTotal(res.pagination.total);
+    const activeRes = await getPenaltiesPaginated({
+      status: "active",
+      limit: "1",
+      page: "1",
+    });
+    setTotalActive(activeRes.pagination.total);
   }
 
   async function reload() {
@@ -293,8 +300,7 @@ export default function PenaltyManagement() {
                 Vi phạm & Cảnh báo
               </h1>
               <p className="text-sm text-gray-500">
-                {penalties.filter((p) => p.status === "active").length} vi phạm
-                đang xử lý
+                {totalActive} vi phạm đang xử lý
               </p>
             </div>
           </div>
@@ -307,7 +313,7 @@ export default function PenaltyManagement() {
             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${tab === "penalties" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
           >
             <FileText className="w-4 h-4" />
-            Vi phạm ({penalties.length})
+            Vi phạm ({total})
           </button>
           <button
             onClick={() => setTab("templates")}
