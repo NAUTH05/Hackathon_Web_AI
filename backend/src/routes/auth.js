@@ -172,8 +172,14 @@ router.put('/profile', authenticate, async (req, res) => {
     }
 
     // Update linked employee fields
-    const [userRows] = await pool.execute('SELECT employee_id FROM users WHERE id = ?', [userId]);
+    const [userRows] = await pool.execute(
+      'SELECT u.username, u.employee_id, e.employee_code FROM users u LEFT JOIN employees e ON u.employee_id = e.id WHERE u.id = ?',
+      [userId]
+    );
     const employeeId = userRows[0]?.employee_id;
+    const currentUsername = userRows[0]?.username;
+    const employeeCode = userRows[0]?.employee_code;
+
     if (employeeId) {
       const sets = [];
       const vals = [];
@@ -183,6 +189,18 @@ router.put('/profile', authenticate, async (req, res) => {
       if (sets.length > 0) {
         vals.push(employeeId);
         await pool.execute(`UPDATE employees SET ${sets.join(', ')} WHERE id = ?`, vals);
+      }
+
+      // Nếu username đang là fallback (= employeeCode) và email mới được cập nhật
+      // thì tự động đổi username thành phần trước @ của email
+      if (email && employeeCode && currentUsername === employeeCode) {
+        const newUsername = email.split('@')[0];
+        if (newUsername && newUsername !== currentUsername) {
+          const [existingUser] = await pool.execute('SELECT id FROM users WHERE username = ? AND id != ?', [newUsername, userId]);
+          if (existingUser.length === 0) {
+            await pool.execute('UPDATE users SET username = ? WHERE id = ?', [newUsername, userId]);
+          }
+        }
       }
     }
 
@@ -213,6 +231,82 @@ router.put('/profile', authenticate, async (req, res) => {
     });
   } catch (err) {
     console.error('Update profile error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// GET /api/auth/users/:employeeId/roles — lấy roles của user theo employeeId
+router.get('/users/:employeeId/roles', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && (req.user.roleLevel || 5) > 2) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    const [userRows] = await pool.execute('SELECT id, username, name FROM users WHERE employee_id = ?', [req.params.employeeId]);
+    if (userRows.length === 0) return res.json({ userId: null, username: null, roles: [] });
+    const userId = userRows[0].id;
+    const [roleRows] = await pool.execute('SELECT role_name FROM user_roles WHERE user_id = ?', [userId]);
+    res.json({ userId, username: userRows[0].username, name: userRows[0].name, roles: roleRows.map(r => r.role_name) });
+  } catch (err) {
+    console.error('Get user roles error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/auth/users/:employeeId/roles — set roles cho user theo employeeId
+router.put('/users/:employeeId/roles', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && (req.user.roleLevel || 5) > 2) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+    const { roles } = req.body;
+    if (!Array.isArray(roles)) return res.status(400).json({ error: 'roles phải là mảng' });
+
+    const ALLOWED_ROLES = ['hr-manager', 'salary_manager'];
+    const validRoles = roles.filter(r => ALLOWED_ROLES.includes(r));
+
+    const [userRows] = await pool.execute('SELECT id FROM users WHERE employee_id = ?', [req.params.employeeId]);
+    if (userRows.length === 0) return res.status(404).json({ error: 'User chưa có tài khoản' });
+    const userId = userRows[0].id;
+
+    await pool.execute('DELETE FROM user_roles WHERE user_id = ?', [userId]);
+    for (const role of validRoles) {
+      await pool.execute('INSERT INTO user_roles (user_id, role_name) VALUES (?, ?)', [userId, role]);
+    }
+    res.json({ message: 'Cập nhật role thành công', roles: validRoles });
+  } catch (err) {
+    console.error('Set user roles error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/auth/change-password
+router.put('/change-password', authenticate, async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ error: 'Thiếu mật khẩu cũ hoặc mật khẩu mới' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 6 ký tự' });
+    }
+
+    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'User không tồn tại' });
+    }
+
+    const user = rows[0];
+    const valid = await bcrypt.compare(oldPassword, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Mật khẩu cũ không đúng' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await pool.execute('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, req.user.id]);
+
+    res.json({ message: 'Đổi mật khẩu thành công' });
+  } catch (err) {
+    console.error('Change password error:', err);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });

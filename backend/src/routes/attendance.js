@@ -189,17 +189,31 @@ router.get('/export', authenticate, async (req, res) => {
 router.get('/today', authenticate, async (req, res) => {
   try {
     const today = getVietnamNow().today;
-    let query = `SELECT * FROM attendance_records WHERE date = ?`;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+
+    let where = `WHERE date = ?`;
     const params = [today];
 
     if (req.user.role !== 'admin') {
       params.push(req.user.employeeId);
-      query += ` AND employee_id = ?`;
+      where += ` AND employee_id = ?`;
     }
 
-    query += ' ORDER BY check_in_time DESC';
-    const [rows] = await pool.execute(query, params);
-    res.json(toCamelCaseArray(rows));
+    const [[{ total }]] = await pool.execute(
+      `SELECT COUNT(*) AS total FROM attendance_records ${where}`, params
+    );
+
+    const [rows] = await pool.execute(
+      `SELECT * FROM attendance_records ${where} ORDER BY check_in_time DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
+    );
+
+    res.json({
+      data: toCamelCaseArray(rows),
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
   } catch (err) {
     console.error('Get today attendance error:', err);
     res.status(500).json({ error: 'Lỗi server' });
@@ -310,9 +324,6 @@ router.post('/check-in', authenticate, async (req, res) => {
     const today = vn.today;
     const now = vn.dateObj;
 
-    // Optional: admin-only time override for load testing / backdated correction.
-    // Regular employees never send this field → zero impact on normal usage.
-    // Non-admin requests that include this field have it silently ignored.
     let effectiveTime = vn;
     if (overrideTime && req.user.role === 'admin') {
       const p = String(overrideTime).split(':').map(Number);
@@ -368,7 +379,7 @@ router.post('/check-in', authenticate, async (req, res) => {
     }
 
     if (!shift) {
-      const dayOfWeek = new Date(today + 'T12:00:00+07:00').getDay(); // Vietnam day of week
+      const dayOfWeek = new Date(today + 'T12:00:00+07:00').getDay();
       const [shiftResult] = await pool.execute(
         `SELECT sa.shift_id AS sa_shift_id, s.id AS s_id, s.name, s.start_time, s.end_time,
                 s.allow_late_minutes, s.allow_early_leave_minutes, s.break_start_time, s.break_end_time
@@ -392,7 +403,6 @@ router.post('/check-in', authenticate, async (req, res) => {
       shiftId = shift.shift_id || shift.id;
       shiftName = shift.name;
 
-      // Calculate late minutes using Vietnam local time (timezone-safe)
       const startTime = shift.start_time || '';
       const timeParts = startTime.split(':').map(Number);
       const shiftH = timeParts[0];

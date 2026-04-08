@@ -69,6 +69,12 @@ export const authApi = {
   profile: () => request<Record<string, unknown>>('GET', '/auth/profile'),
   updateProfile: (data: { avatar?: string; email?: string; phone?: string }) =>
     request<Record<string, unknown>>('PUT', '/auth/profile', data),
+  changePassword: (data: { oldPassword: string; newPassword: string }) =>
+    request<{ message: string }>('PUT', '/auth/change-password', data),
+  getUserRoles: (employeeId: string) =>
+    request<{ userId: string | null; username: string | null; name: string | null; roles: string[] }>('GET', `/auth/users/${encodeURIComponent(employeeId)}/roles`),
+  setUserRoles: (employeeId: string, roles: string[]) =>
+    request<{ message: string; roles: string[] }>('PUT', `/auth/users/${encodeURIComponent(employeeId)}/roles`, { roles }),
 };
 
 // ============ Employees ============
@@ -122,7 +128,7 @@ export const shiftAssignmentsApi = {
 export const attendanceApi = {
   list: (params?: Record<string, string>) =>
     request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>('GET', '/attendance', undefined, params),
-  today: () => request<Record<string, unknown>[]>('GET', '/attendance/today'),
+  today: (params?: Record<string, string>) => request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>('GET', '/attendance/today', undefined, params),
   stats: () => request<Record<string, unknown>>('GET', '/attendance/stats'),
   checkIn: (data: { employeeId: string; shiftId?: string; latitude?: number; longitude?: number; checkInImage?: string }) =>
     request<Record<string, unknown>>('POST', '/attendance/check-in', data),
@@ -154,6 +160,10 @@ export const penaltiesApi = {
   create: (data: Record<string, unknown>) => request<Record<string, unknown>>('POST', '/penalties', data),
   update: (id: string, data: Record<string, unknown>) => request<Record<string, unknown>>('PUT', `/penalties/${encodeURIComponent(id)}`, data),
   delete: (id: string) => request<void>('DELETE', `/penalties/${encodeURIComponent(id)}`),
+  resolveAll: (filters?: { status?: string; type?: string }) =>
+    request<{ updated: number }>('PUT', '/penalties/resolve-all', filters || {}),
+  cleanup: (days: number) =>
+    request<{ deleted: number; days: number }>('DELETE', `/penalties/cleanup`, undefined, { days: String(days) }),
 };
 
 // ============ Penalty Templates ============
@@ -182,16 +192,34 @@ export const salaryApi = {
   deletePreset: (id: string) => request<void>('DELETE', `/salary/presets/${encodeURIComponent(id)}`),
   assignments: () => request<Record<string, unknown>[]>('GET', '/salary/assignments'),
   assign: (data: { employeeId: string; presetId: string }) => request<Record<string, unknown>>('POST', '/salary/assignments', data),
-  records: (params?: Record<string, string>) => request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number }; summary?: { totalNet: number; totalGross: number }; departments?: string[] }>('GET', '/salary/records', undefined, params),
+  records: (params?: Record<string, string>) => request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number }; summary?: { totalNet: number; totalGross: number; totalOtHours?: number }; departments?: string[] }>('GET', '/salary/records', undefined, params),
   calculate: (month: string) => request<Record<string, unknown>[]>('POST', '/salary/calculate', { month }),
   lockMonth: (month: string) => request<void>('POST', '/salary/lock-month', { month }),
   unlockMonth: (month: string) => request<void>('POST', '/salary/unlock-month', { month }),
   getCoefficients: () => request<Record<string, unknown>[]>('GET', '/salary/coefficients'),
   updateCoefficient: (id: string, data: Record<string, unknown>) => request<Record<string, unknown>>('PUT', `/salary/coefficients/${encodeURIComponent(id)}`, data),
+  deleteCoefficient: (type: string) => request<void>('DELETE', `/salary/coefficients/${encodeURIComponent(type)}`),
   getPermissions: () => request<Record<string, unknown>[]>('GET', '/salary/permissions'),
   setPermission: (data: Record<string, unknown>) => request<Record<string, unknown>>('POST', '/salary/permissions', data),
   revokePermission: (userId: string) => request<void>('DELETE', `/salary/permissions/${encodeURIComponent(userId)}`),
   searchUsers: (q: string) => request<{ id: string; name: string; username: string; role: string; department: string }[]>('GET', '/salary/search-users', undefined, { q }),
+  getAttendanceScores: (params: { month: string; page?: number; limit?: number; search?: string; dept?: string; rank?: string; sortBy?: string; sortDir?: string }) => {
+    const q: Record<string, string> = { month: params.month };
+    if (params.page !== undefined) q.page = String(params.page);
+    if (params.limit !== undefined) q.limit = String(params.limit);
+    if (params.search) q.search = params.search;
+    if (params.dept) q.dept = params.dept;
+    if (params.rank) q.rank = params.rank;
+    if (params.sortBy) q.sortBy = params.sortBy;
+    if (params.sortDir) q.sortDir = params.sortDir;
+    return request<{ month: string; data: Record<string, unknown>[]; total: number; page: number; totalPages: number; departments?: string[] }>('GET', '/salary/attendance-scores', undefined, q);
+  },
+  adjustOt: (id: string, data: Record<string, unknown>) => request<Record<string, unknown>>('PUT', `/salary/records/${encodeURIComponent(id)}/adjust-ot`, data),
+  // Deduction items
+  getDeductionItems: () => request<Record<string, unknown>[]>('GET', '/salary/deduction-items'),
+  createDeductionItem: (data: Record<string, unknown>) => request<Record<string, unknown>>('POST', '/salary/deduction-items', data),
+  updateDeductionItem: (id: string, data: Record<string, unknown>) => request<Record<string, unknown>>('PUT', `/salary/deduction-items/${encodeURIComponent(id)}`, data),
+  deleteDeductionItem: (id: string) => request<void>('DELETE', `/salary/deduction-items/${encodeURIComponent(id)}`),
 };
 
 // ============ Holidays ============

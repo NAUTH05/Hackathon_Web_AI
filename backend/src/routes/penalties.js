@@ -40,6 +40,20 @@ router.get('/', authenticate, async (req, res) => {
       where += ` AND employee_id = ?`;
     }
 
+    // Server-side filters
+    if (req.query.status) {
+      params.push(req.query.status);
+      where += ` AND status = ?`;
+    }
+    if (req.query.type) {
+      params.push(req.query.type);
+      where += ` AND type = ?`;
+    }
+    if (req.query.employeeSearch) {
+      params.push(`%${req.query.employeeSearch}%`);
+      where += ` AND employee_name LIKE ?`;
+    }
+
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 30));
     const offset = (page - 1) * limit;
@@ -95,6 +109,75 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
+// PUT /api/penalties/resolve-all — bulk resolve (admin + managers)
+// MUST be before /:id to avoid route clash
+router.put('/resolve-all', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin' && !isManagerLevel(req)) {
+      return res.status(403).json({ error: 'Không có quyền' });
+    }
+
+    let where = `WHERE status != 'resolved'`;
+    const params = [];
+
+    if (req.user.role !== 'admin') {
+      const deptIds = await getDeptEmployeeIds(req.user.employeeId);
+      if (deptIds.length > 0) {
+        where += ` AND employee_id IN (${deptIds.map(() => '?').join(',')})`;
+        params.push(...deptIds);
+      } else {
+        return res.json({ updated: 0 });
+      }
+    }
+
+    // Optional filters from body
+    if (req.body.status) { where += ` AND status = ?`; params.push(req.body.status); }
+    if (req.body.type) { where += ` AND type = ?`; params.push(req.body.type); }
+
+    const [result] = await pool.execute(`UPDATE penalties SET status = 'resolved' ${where}`, params);
+
+    await logAudit({
+      action: 'penalty',
+      performedBy: req.user.name,
+      targetEmployee: 'all',
+      details: `Giải quyết hàng loạt ${result.affectedRows} vi phạm`,
+    });
+
+    res.json({ updated: result.affectedRows });
+  } catch (err) {
+    console.error('Resolve-all penalties error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// DELETE /api/penalties/cleanup — delete old resolved penalties (admin only)
+// MUST be before /:id to avoid route clash
+router.delete('/cleanup', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Chỉ admin mới có quyền dọn dẹp' });
+    }
+
+    const days = Math.max(30, parseInt(req.query.days) || 365);
+    const [result] = await pool.execute(
+      `DELETE FROM penalties WHERE status = 'resolved' AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [days]
+    );
+
+    await logAudit({
+      action: 'penalty',
+      performedBy: req.user.name,
+      targetEmployee: 'system',
+      details: `Dọn dẹp ${result.affectedRows} vi phạm đã giải quyết (> ${days} ngày)`,
+    });
+
+    res.json({ deleted: result.affectedRows, days });
+  } catch (err) {
+    console.error('Cleanup penalties error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
 // PUT /api/penalties/:id — update (appeal, resolve)
 router.put('/:id', authenticate, async (req, res) => {
   try {
@@ -124,7 +207,7 @@ router.put('/:id', authenticate, async (req, res) => {
         status = COALESCE(?, status),
         appeal_reason = COALESCE(?, appeal_reason)
        WHERE id = ?`,
-      [status, appealReason, req.params.id]
+      [status ?? null, appealReason ?? null, req.params.id]
     );
     const [rows] = await pool.execute('SELECT * FROM penalties WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy phạt' });

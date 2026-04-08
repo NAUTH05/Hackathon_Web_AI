@@ -135,8 +135,14 @@ export async function getAttendanceRecordsPaginated(params?: Record<string, stri
   return { data: cast<AttendanceRecord>(res.data), pagination: res.pagination };
 }
 
+export async function getTodayAttendancePaginated(page = 1, limit = 20): Promise<{ data: AttendanceRecord[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
+  const res = await attendanceApi.today({ page: String(page), limit: String(limit) });
+  return { data: cast<AttendanceRecord>(res.data), pagination: res.pagination };
+}
+
 export async function getTodayAttendance(): Promise<AttendanceRecord[]> {
-  return cast<AttendanceRecord>(await attendanceApi.today());
+  const res = await attendanceApi.today({ limit: '20' });
+  return cast<AttendanceRecord>(res.data);
 }
 
 export async function getAttendanceByMonth(yearMonth: string): Promise<AttendanceRecord[]> {
@@ -262,6 +268,14 @@ export async function updatePenalty(id: string, data: Record<string, unknown>): 
 
 export async function deletePenalty(id: string): Promise<void> {
   await penaltiesApi.delete(id);
+}
+
+export async function resolveAllPenalties(filters?: { status?: string; type?: string }): Promise<{ updated: number }> {
+  return penaltiesApi.resolveAll(filters);
+}
+
+export async function cleanupPenalties(days: number): Promise<{ deleted: number; days: number }> {
+  return penaltiesApi.cleanup(days);
 }
 
 // ========== Shift Swaps ==========
@@ -506,6 +520,10 @@ export async function updateSalaryCoefficient(id: string, data: Record<string, u
   return castOne<SalaryCoefficient>(await salaryApi.updateCoefficient(id, data));
 }
 
+export async function deleteSalaryCoefficient(type: string): Promise<void> {
+  await salaryApi.deleteCoefficient(type);
+}
+
 // ========== Salary Permissions ==========
 export interface SalaryPermission {
   userId: string;
@@ -530,6 +548,14 @@ export async function revokeSalaryPermission(userId: string): Promise<void> {
 
 export async function searchUsersForRole(q: string) {
   return await salaryApi.searchUsers(q);
+}
+
+export async function getAttendanceScores(params: { month: string; page?: number; limit?: number; search?: string; dept?: string; rank?: string; sortBy?: string; sortDir?: string }) {
+  return await salaryApi.getAttendanceScores(params);
+}
+
+export async function adjustSalaryOt(id: string, data: Record<string, unknown>) {
+  return await salaryApi.adjustOt(id, data);
 }
 
 // ========== Export Templates ==========

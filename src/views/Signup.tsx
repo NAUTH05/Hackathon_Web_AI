@@ -53,7 +53,7 @@ export default function Signup() {
               <Clock className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold">TimeKeeper</h1>
+              <h1 className="text-2xl font-bold">AquaFlow HRM System</h1>
               <p className="text-xs text-white/70">Workforce Management</p>
             </div>
           </div>
@@ -68,7 +68,9 @@ export default function Signup() {
             và báo cáo tổng hợp — tất cả trong một nền tảng.
           </p>
         </div>
-        <div className="text-sm text-white/50">TimeKeeper v2.0 — © 2026</div>
+        <div className="text-sm text-white/50">
+          AquaFlow HRM System v2.0 — © 2026
+        </div>
       </div>
 
       {/* Right panel — signup form */}
@@ -80,7 +82,9 @@ export default function Signup() {
               <Clock className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">TimeKeeper</h1>
+              <h1 className="text-xl font-bold text-gray-900">
+                AquaFlow HRM System
+              </h1>
               <p className="text-xs text-gray-400">Workforce Management</p>
             </div>
           </div>

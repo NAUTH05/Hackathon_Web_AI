@@ -95,6 +95,16 @@ async function getDeptEmployeeIds(employeeId) {
   }
 }
 
+// Middleware: chỉ level 1-2 hoặc có role hr-manager mới được tạo nhân viên
+function canCreateEmployee(req, res, next) {
+  const level = req.user.roleLevel || ROLE_LEVELS.EMPLOYEE;
+  const roles = req.user.roles || [];
+  if (level <= ROLE_LEVELS.DIRECTOR || roles.includes('hr-manager')) {
+    return next();
+  }
+  return res.status(403).json({ error: 'Chỉ cấp 1-2 (Admin/Giám đốc) hoặc HR Manager mới được thêm nhân viên' });
+}
+
 // Middleware: require level <= maxLevel (managers)
 function requireManager(req, res, next) {
   if (req.user.role === 'admin') return next();
@@ -103,4 +113,4 @@ function requireManager(req, res, next) {
   return res.status(403).json({ error: 'Chỉ quản lý mới có quyền thực hiện thao tác này' });
 }
 
-module.exports = { authenticate, adminOnly, requireLevel, requireManager, requireSalaryRole, adminOrSalaryRole, loadUserRoles, isManagerLevel, getDeptEmployeeIds, ROLE_LEVELS };
+module.exports = { authenticate, adminOnly, canCreateEmployee, requireLevel, requireManager, requireSalaryRole, adminOrSalaryRole, loadUserRoles, isManagerLevel, getDeptEmployeeIds, ROLE_LEVELS };

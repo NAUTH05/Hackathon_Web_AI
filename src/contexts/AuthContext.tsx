@@ -24,6 +24,7 @@ interface AuthContextType {
   updateUser: (partial: Partial<User>) => void;
   isAdmin: boolean;
   isSalaryManager: boolean;
+  canCreateEmployee: boolean;
   roleLevel: number;
   hasAccess: (maxLevel: number) => boolean;
   hydrated: boolean;
@@ -37,6 +38,7 @@ const AuthContext = createContext<AuthContextType>({
   updateUser: () => {},
   isAdmin: false,
   isSalaryManager: false,
+  canCreateEmployee: false,
   roleLevel: 5,
   hasAccess: () => false,
   hydrated: false,
@@ -105,7 +107,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const roleLevel = user?.roleLevel ?? ROLE_LEVELS.EMPLOYEE;
   const isAdmin = user?.role === "admin" || roleLevel === ROLE_LEVELS.ADMIN;
-  const isSalaryManager = (user?.roles || []).includes('salary_manager');
+  const isSalaryManager = (user?.roles || []).includes("salary_manager");
+  const canCreateEmployee =
+    roleLevel <= ROLE_LEVELS.DIRECTOR ||
+    (user?.roles || []).includes("hr-manager");
   const hasAccess = (maxLevel: number) => roleLevel <= maxLevel;
 
   function updateUser(partial: Partial<User>) {
@@ -122,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updateUser,
         isAdmin,
         isSalaryManager,
+        canCreateEmployee,
         roleLevel,
         hasAccess,
         hydrated,
