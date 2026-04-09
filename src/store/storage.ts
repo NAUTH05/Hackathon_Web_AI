@@ -328,9 +328,9 @@ export async function checkAutoRejectLeave(): Promise<{ message: string; updated
 }
 
 // ========== Daily Timesheet ==========
-export async function getDailyTimesheetPaginated(params?: Record<string, string>): Promise<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number }; date: string }> {
+export async function getDailyTimesheetPaginated(params?: Record<string, string>): Promise<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number }; date: string; isLocked?: boolean; stats?: { present: number; late: number; noRecord: number; noCheckout: number; totalHours: number } }> {
   const res = await timesheetsApi.daily(params);
-  return { data: res.data, pagination: res.pagination, date: res.date };
+  return { data: res.data, pagination: res.pagination, date: res.date, isLocked: res.isLocked, stats: res.stats };
 }
 
 // ========== Monthly Timesheets ==========

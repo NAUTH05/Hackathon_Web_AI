@@ -77,11 +77,8 @@ export default function DailyTimesheet() {
       setRecords(res.data as unknown as DailyRecord[]);
       setTotalPages(res.pagination.totalPages);
       setTotal(res.pagination.total);
-      setIsLocked(!!(res as unknown as Record<string, unknown>).isLocked);
-      const s = (res as unknown as Record<string, unknown>).stats as
-        | typeof stats
-        | undefined;
-      if (s) setStats(s);
+      setIsLocked(!!res.isLocked);
+      if (res.stats) setStats(res.stats);
     } catch (err) {
       console.error(err);
     } finally {

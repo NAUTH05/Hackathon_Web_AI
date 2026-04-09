@@ -238,7 +238,7 @@ export const holidaysApi = {
 // ============ Timesheets ============
 export const timesheetsApi = {
   list: (params?: Record<string, string>) => request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number } }>('GET', '/timesheets', undefined, params),
-  daily: (params?: Record<string, string>) => request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number }; date: string; isLocked: boolean; lockedBy: string | null }>('GET', '/timesheets/daily', undefined, params),
+  daily: (params?: Record<string, string>) => request<{ data: Record<string, unknown>[]; pagination: { page: number; limit: number; total: number; totalPages: number }; date: string; isLocked: boolean; lockedBy: string | null; stats: { present: number; late: number; noRecord: number; noCheckout: number; totalHours: number } }>('GET', '/timesheets/daily', undefined, params),
   generate: (month: string) => request<{ message: string; count: number }>('POST', '/timesheets/generate', { month }),
   lock: (month: string) => request<void>('POST', '/timesheets/lock', { month }),
   unlock: (month: string) => request<void>('POST', '/timesheets/unlock', { month }),
