@@ -92,6 +92,22 @@ interface ChatMessage {
   parts: { text: string }[];
 }
 
+export async function callGeminiWithRetry(fn: () => Promise<unknown>, retries = 3) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (retries <= 0) throw err;
+
+    // nếu là 503 thì retry
+    if (err instanceof Error && err.message.includes("503")) {
+      await new Promise(res => setTimeout(res, 1000)); // delay 1s
+      return callGeminiWithRetry(fn, retries - 1);
+    }
+
+    throw err;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -118,7 +134,7 @@ export async function POST(request: NextRequest) {
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: "gemini-flash-latest",
+      model: "gemini-2.5-flash",
       systemInstruction: SYSTEM_INSTRUCTION,
     });
 

@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "SMARTHOME_SIMULATOR",
+			"path": "../../../New_System_Content_Folder/Documents/PlatformIO/Projects/SMARTHOME_SIMULATOR"
+		}
+	],
+	"settings": {}
+}

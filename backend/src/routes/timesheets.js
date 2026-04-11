@@ -60,9 +60,42 @@ router.get('/daily', authenticate, async (req, res) => {
     );
     const isLocked = lockRows.length > 0;
 
+    // Summary stats across ALL employees (not just current page)
+    let statsWhere = 'WHERE e.is_active = 1';
+    const statsParams = [date];
+    if (search) {
+      statsWhere += ` AND (e.name LIKE ? OR e.employee_code LIKE ?)`;
+      statsParams.push(search, search);
+    }
+    if (req.user.role !== 'admin') {
+      statsWhere += ` AND e.id = ?`;
+      statsParams.push(req.user.employeeId);
+    }
+
+    const [statsRows] = await pool.execute(
+      `SELECT
+        SUM(CASE WHEN ar.status IN ('on-time','late','pending','early-leave') THEN 1 ELSE 0 END) AS present,
+        SUM(CASE WHEN ar.status = 'late' THEN 1 ELSE 0 END) AS late,
+        SUM(CASE WHEN ar.id IS NULL THEN 1 ELSE 0 END) AS no_record,
+        SUM(CASE WHEN ar.check_in_time IS NOT NULL AND ar.check_out_time IS NULL THEN 1 ELSE 0 END) AS no_checkout,
+        COALESCE(SUM(ar.working_hours), 0) AS total_hours
+       FROM employees e
+       LEFT JOIN attendance_records ar ON e.id = ar.employee_id AND ar.date = ?
+       ${statsWhere}`,
+      statsParams
+    );
+    const stats = statsRows[0];
+
     res.json({
       data: toCamelCaseArray(rows),
       pagination: { page, limit, total, totalPages },
+      stats: {
+        present: parseInt(stats.present || 0),
+        late: parseInt(stats.late || 0),
+        noRecord: parseInt(stats.no_record || 0),
+        noCheckout: parseInt(stats.no_checkout || 0),
+        totalHours: parseFloat(stats.total_hours || 0),
+      },
       date,
       isLocked,
       lockedBy: isLocked ? lockRows[0].locked_by : null,

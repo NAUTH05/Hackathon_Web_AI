@@ -48,6 +48,13 @@ export default function DailyTimesheet() {
   const [loading, setLoading] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [locking, setLocking] = useState(false);
+  const [stats, setStats] = useState({
+    present: 0,
+    late: 0,
+    noRecord: 0,
+    noCheckout: 0,
+    totalHours: 0,
+  });
 
   useEffect(() => {
     setPage(1);
@@ -70,7 +77,8 @@ export default function DailyTimesheet() {
       setRecords(res.data as unknown as DailyRecord[]);
       setTotalPages(res.pagination.totalPages);
       setTotal(res.pagination.total);
-      setIsLocked(!!(res as unknown as Record<string, unknown>).isLocked);
+      setIsLocked(!!res.isLocked);
+      if (res.stats) setStats(res.stats);
     } catch (err) {
       console.error(err);
     } finally {
@@ -121,16 +129,11 @@ export default function DailyTimesheet() {
     pending: "bg-blue-100 text-blue-700",
   };
 
-  // Summary stats
-  const totalPresent = records.filter(
-    (r) =>
-      r.attendanceStatus === "on-time" ||
-      r.attendanceStatus === "late" ||
-      r.attendanceStatus === "pending",
-  ).length;
-  const totalLate = records.filter((r) => r.attendanceStatus === "late").length;
-  const totalNoRecord = records.filter((r) => !r.attendanceId).length;
-  const totalHours = records.reduce((sum, r) => sum + (r.workingHours || 0), 0);
+  // Summary stats from server (aggregated across all employees, not just current page)
+  const totalPresent = stats.present;
+  const totalLate = stats.late;
+  const totalNoRecord = stats.noRecord;
+  const totalHours = stats.totalHours;
 
   return (
     <div className="space-y-6">
