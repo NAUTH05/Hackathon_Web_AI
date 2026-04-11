@@ -92,11 +92,27 @@ interface ChatMessage {
   parts: { text: string }[];
 }
 
+export async function callGeminiWithRetry(fn: () => Promise<unknown>, retries = 3) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (retries <= 0) throw err;
+
+    // nếu là 503 thì retry
+    if (err instanceof Error && err.message.includes("503")) {
+      await new Promise(res => setTimeout(res, 1000)); // delay 1s
+      return callGeminiWithRetry(fn, retries - 1);
+    }
+
+    throw err;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.GEMINI_API_KEY;
 
-    if (!apiKey || apiKey === "API") {
+    if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY_HERE") {
       return NextResponse.json(
         { error: "GEMINI_API_KEY chưa được cấu hình trong file .env" },
         { status: 500 }
