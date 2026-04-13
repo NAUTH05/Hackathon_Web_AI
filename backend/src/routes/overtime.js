@@ -72,8 +72,57 @@ router.post('/', authenticate, async (req, res) => {
       }
     }
 
+    // ── Conflict validation ──────────────────────────────────────────────────
+    const toMins = (t) => { const [h, m] = (t || '00:00').split(':').map(Number); return h * 60 + m; };
+    const otStart = toMins(startTime);
+    const otEnd = toMins(endTime);
+    // Support overnight OT (e.g. 22:00 → 06:00)
+    const otEndAdj = otEnd <= otStart ? otEnd + 1440 : otEnd;
 
+    // 1. Check overlap with assigned shifts on that day-of-week
+    const dayOfWeek = new Date(date).getDay(); // 0=Sun … 6=Sat
+    const [shiftRows] = await pool.execute(
+      `SELECT sa.*, s.name AS shift_name, s.start_time, s.end_time
+       FROM shift_assignments sa
+       JOIN shifts s ON sa.shift_id = s.id
+       WHERE sa.employee_id = ?
+         AND sa.day_of_week = ?
+         AND sa.effective_from <= ?
+         AND (sa.effective_to IS NULL OR sa.effective_to >= ?)`,
+      [empId, dayOfWeek, date, date]
+    );
+    for (const shift of shiftRows) {
+      const sStart = toMins(shift.start_time);
+      const sEnd = toMins(shift.end_time);
+      const sEndAdj = sEnd <= sStart ? sEnd + 1440 : sEnd;
+      // Overlap when intervals intersect
+      if (otStart < sEndAdj && otEndAdj > sStart) {
+        return res.status(409).json({
+          error: `OT trùng với ca làm việc "${shift.shift_name}" (${shift.start_time} – ${shift.end_time}) vào ngày ${date}. Vui lòng chọn khung giờ khác.`,
+        });
+      }
+    }
 
+    // 2. Check overlap with existing non-rejected OT requests on the same date
+    const newId = id; // prevent self-overlap on edit
+    const [existingOT] = await pool.execute(
+      `SELECT * FROM ot_requests
+       WHERE employee_id = ? AND date = ?
+         AND status NOT IN ('rejected', 'auto-rejected')
+         AND id != ?`,
+      [empId, date, newId]
+    );
+    for (const ot of existingOT) {
+      const eStart = toMins(ot.start_time);
+      const eEnd = toMins(ot.end_time);
+      const eEndAdj = eEnd <= eStart ? eEnd + 1440 : eEnd;
+      if (otStart < eEndAdj && otEndAdj > eStart) {
+        return res.status(409).json({
+          error: `Đã có đăng ký OT trùng thời gian (${ot.start_time} – ${ot.end_time}) vào ngày ${date}.`,
+        });
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     await pool.execute(
       `INSERT INTO ot_requests (id, employee_id, employee_name, date, shift_id, start_time, end_time, hours, multiplier, reason)

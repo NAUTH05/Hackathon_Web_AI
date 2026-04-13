@@ -1,12 +1,13 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+﻿import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 
-const SYSTEM_INSTRUCTION = `Bạn là "AquaFlow HRM System Assistant" — trợ lý hướng dẫn sử dụng hệ thống quản lý nhân sự AquaFlow HRM System.
+const BASE_SYSTEM_INSTRUCTION = `Bạn là "AquaFlow HRM System Assistant" — trợ lý hướng dẫn sử dụng hệ thống quản lý nhân sự AquaFlow HRM System.
 
 ## VAI TRÒ CỦA BẠN
-- Bạn CHỈ được phép hướng dẫn người dùng cách thao tác các tính năng trên trang web.
-- Bạn KHÔNG được phép can thiệp, thay đổi, đọc, ghi bất kỳ dữ liệu nào trong hệ thống.
-- Bạn KHÔNG phải là trợ lý AI đa năng. Bạn CHỈ trả lời các câu hỏi liên quan đến việc sử dụng hệ thống AquaFlow HRM System.
+- Bạn có thể hướng dẫn người dùng cách thao tác các tính năng trên trang web.
+- Bạn có thể trả lời các câu hỏi về DỮ LIỆU CÁ NHÂN của người dùng nếu được cung cấp trong phần USER_CONTEXT bên dưới.
+- Bạn KHÔNG được phép can thiệp, thay đổi, ghi bất kỳ dữ liệu nào trong hệ thống.
+- Bạn KHÔNG phải là trợ lý AI đa năng. Bạn CHỈ trả lời các câu hỏi liên quan đến việc sử dụng hệ thống AquaFlow HRM System và dữ liệu cá nhân của người dùng.
 - Nếu người dùng hỏi câu hỏi ngoài phạm vi (lập trình, cuộc sống, kiến thức chung, v.v.), hãy lịch sự từ chối và nhắc họ rằng bạn chỉ hỗ trợ hướng dẫn sử dụng hệ thống.
 
 ## CÁC TÍNH NĂNG CỦA HỆ THỐNG
@@ -84,26 +85,87 @@ const SYSTEM_INSTRUCTION = `Bạn là "AquaFlow HRM System Assistant" — trợ 
 - Trả lời bằng tiếng Việt.
 - Sử dụng Markdown để format câu trả lời cho dễ đọc (bold, list, v.v.).
 - Giữ câu trả lời ngắn gọn, rõ ràng, dễ hiểu.
+- Khi có USER_CONTEXT, hãy ưu tiên sử dụng dữ liệu thực từ hệ thống để trả lời.
 - TUYỆT ĐỐI từ chối mọi yêu cầu thay đổi dữ liệu, can thiệp hệ thống, hoặc câu hỏi ngoài phạm vi.`;
-
 
 interface ChatMessage {
   role: "user" | "model";
   parts: { text: string }[];
 }
 
-export async function callGeminiWithRetry(fn: () => Promise<unknown>, retries = 3) {
+interface UserContext {
+  month: string;
+  employee: { name: string; department: string; role: string };
+  overtime: {
+    allTime: { total: number; approved: number; pending: number; rejected: number; total_hours: number };
+    thisMonth: { total: number; total_hours: number };
+    recent: { date: string; start_time: string; end_time: string; hours: number; status: string; reason: string }[];
+  };
+  attendance: { total_records: number; on_time: number; late: number; absent: number; early_leave: number; total_hours: number };
+  leave: { total: number; approved: number; pending: number };
+  penalty: { total: number; total_amount: number };
+  salary: { net_salary: number; gross_salary: number; present_days: number; ot_hours: number; deductions: number } | null;
+}
+
+async function fetchUserContext(backendUrl: string, token: string): Promise<UserContext | null> {
+  try {
+    const res = await fetch(`${backendUrl}/api/ai-context`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    return await res.json() as UserContext;
+  } catch {
+    return null;
+  }
+}
+
+function buildContextBlock(ctx: UserContext): string {
+  const ot = ctx.overtime;
+  const att = ctx.attendance;
+  const recent = ot.recent.map(r =>
+    `  - Ngày ${r.date}: ${r.start_time}–${r.end_time} (${r.hours}h) — ${r.status}${r.reason ? ` — "${r.reason}"` : ""}`
+  ).join("\n");
+
+  return `
+## USER_CONTEXT — Dữ liệu thực tế của người dùng (tháng ${ctx.month})
+Người dùng: **${ctx.employee.name}** | Phòng ban: ${ctx.employee.department || "N/A"}
+
+### Tăng ca (OT)
+- Tổng số lần đăng ký OT (từ trước đến nay): **${ot.allTime.total} lần**
+  - Được duyệt: ${ot.allTime.approved} | Chờ duyệt: ${ot.allTime.pending} | Bị từ chối: ${ot.allTime.rejected}
+  - Tổng giờ OT được duyệt: ${ot.allTime.total_hours}h
+- Tháng ${ctx.month}: **${ot.thisMonth.total} lần** (${ot.thisMonth.total_hours}h được duyệt)
+- 5 lần OT gần nhất:
+${recent || "  (chưa có)"}
+
+### Chấm công tháng ${ctx.month}
+- Tổng bản ghi: ${att.total_records} | Đúng giờ: ${att.on_time} | Đi muộn: ${att.late} | Về sớm: ${att.early_leave} | Vắng: ${att.absent}
+- Tổng giờ công: ${Number(att.total_hours).toFixed(1)}h
+
+### Nghỉ phép tháng ${ctx.month}
+- Tổng: ${ctx.leave.total} đơn | Được duyệt: ${ctx.leave.approved} | Chờ duyệt: ${ctx.leave.pending}
+
+### Vi phạm tháng ${ctx.month}
+- Tổng: ${ctx.penalty.total} lần | Tổng tiền phạt: ${Number(ctx.penalty.total_amount).toLocaleString("vi-VN")}đ
+
+### Lương tháng ${ctx.month}
+${ctx.salary
+  ? `- Lương gross: ${Number(ctx.salary.gross_salary).toLocaleString("vi-VN")}đ | Lương ròng: ${Number(ctx.salary.net_salary).toLocaleString("vi-VN")}đ
+- Ngày công: ${ctx.salary.present_days} | Giờ OT: ${ctx.salary.ot_hours}h | Khấu trừ: ${Number(ctx.salary.deductions).toLocaleString("vi-VN")}đ`
+  : "- Chưa tính lương tháng này"}
+`;
+}
+
+export async function callGeminiWithRetry(fn: () => Promise<unknown>, retries = 3): Promise<unknown> {
   try {
     return await fn();
   } catch (err) {
     if (retries <= 0) throw err;
-
-    // nếu là 503 thì retry
     if (err instanceof Error && err.message.includes("503")) {
-      await new Promise(res => setTimeout(res, 1000)); // delay 1s
+      await new Promise(res => setTimeout(res, 1000));
       return callGeminiWithRetry(fn, retries - 1);
     }
-
     throw err;
   }
 }
@@ -132,10 +194,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const authHeader = request.headers.get("authorization") ?? "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const backendUrl = process.env.BACKEND_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5002";
+
+    let systemInstruction = BASE_SYSTEM_INSTRUCTION;
+    if (token) {
+      const ctx = await fetchUserContext(backendUrl, token);
+      if (ctx) {
+        systemInstruction = BASE_SYSTEM_INSTRUCTION + "\n" + buildContextBlock(ctx);
+      }
+    }
+
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
-      systemInstruction: SYSTEM_INSTRUCTION,
+      systemInstruction,
     });
 
     const chat = model.startChat({

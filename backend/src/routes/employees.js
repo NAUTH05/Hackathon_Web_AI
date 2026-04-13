@@ -252,9 +252,11 @@ router.delete('/:id', authenticate, adminOnly, async (req, res) => {
   }
 });
 
-// POST /api/employees/:id/face — save face descriptor + face image
+// POST /api/employees/:id/face — save face descriptor + face image to disk
 router.post('/:id/face', authenticate, adminOnly, async (req, res) => {
   try {
+    const fs = require('fs');
+    const path = require('path');
     const { faceDescriptor, faceImage } = req.body;
 
     // Convert float array to Buffer for BLOB storage
@@ -264,9 +266,23 @@ router.post('/:id/face', authenticate, adminOnly, async (req, res) => {
       descriptorBuffer = Buffer.from(floatArray.buffer);
     }
 
+    // Save base64 image to disk instead of storing in DB
+    let faceImageUrl = null;
+    if (faceImage && typeof faceImage === 'string' && faceImage.startsWith('data:image')) {
+      const base64Data = faceImage.replace(/^data:image\/\w+;base64,/, '');
+      const facesDir = path.join(__dirname, '..', '..', 'uploads', 'faces');
+      if (!fs.existsSync(facesDir)) fs.mkdirSync(facesDir, { recursive: true });
+      const filePath = path.join(facesDir, `${req.params.id}.jpg`);
+      fs.writeFileSync(filePath, base64Data, 'base64');
+      faceImageUrl = `/uploads/faces/${req.params.id}.jpg`;
+    } else if (faceImage && !faceImage.startsWith('data:image')) {
+      // Already a URL path — keep as is
+      faceImageUrl = faceImage;
+    }
+
     await pool.execute(
       `UPDATE employees SET face_descriptor = ?, face_image = ? WHERE id = ?`,
-      [descriptorBuffer, faceImage || null, req.params.id]
+      [descriptorBuffer, faceImageUrl, req.params.id]
     );
 
     const [rows] = await pool.execute('SELECT * FROM employees WHERE id = ?', [req.params.id]);

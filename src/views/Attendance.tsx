@@ -2,6 +2,7 @@ import { format } from "date-fns";
 import { vi } from "date-fns/locale";
 import {
   AlertTriangle,
+  Camera,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -14,11 +15,18 @@ import {
   Navigation,
   Search,
   Shield,
+  UserCheck,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { showToast } from "../components/Toast";
 import { useAuth } from "../contexts/AuthContext";
+import {
+  getFaceDescriptor,
+  isModelsLoaded,
+  loadModels,
+  recognizeFace,
+} from "../services/faceRecognition";
 import {
   checkIn,
   checkOut,
@@ -117,6 +125,19 @@ export default function Attendance() {
   const [todayTotalPages, setTodayTotalPages] = useState(1);
   const [todayLoading, setTodayLoading] = useState(false);
   const TODAY_LIMIT = 15;
+
+  // Face recognition state
+  type FaceState =
+    | "idle"
+    | "loading-models"
+    | "camera"
+    | "scanning"
+    | "verified"
+    | "failed";
+  const [faceState, setFaceState] = useState<FaceState>("idle");
+  const [faceMessage, setFaceMessage] = useState("");
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   // Check if device is mobile (client-side only)
   useEffect(() => {
@@ -233,9 +254,85 @@ export default function Attendance() {
     );
   }
 
+  // ─── Face recognition helpers ────────────────────────────────────────────
+  async function openFaceCamera() {
+    setFaceState("loading-models");
+    setFaceMessage("Đang tải mô hình nhận diện...");
+    try {
+      if (!isModelsLoaded()) await loadModels();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 480, height: 360, facingMode: "user" },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setFaceState("camera");
+      setFaceMessage("Nhìn thẳng vào camera rồi nhấn Chụp & Xác thực");
+    } catch {
+      setFaceState("failed");
+      setFaceMessage("Không thể mở camera hoặc tải mô hình AI");
+    }
+  }
+
+  function closeFaceCamera() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setFaceState("idle");
+    setFaceMessage("");
+  }
+
+  async function captureFace() {
+    if (!videoRef.current) return;
+    setFaceState("scanning");
+    setFaceMessage("Đang quét khuôn mặt...");
+    try {
+      const descriptor = await getFaceDescriptor(videoRef.current);
+      if (!descriptor) {
+        setFaceState("failed");
+        setFaceMessage("Không phát hiện khuôn mặt. Hãy nhìn thẳng vào camera.");
+        return;
+      }
+      const result = await recognizeFace(descriptor, 0.55);
+      closeFaceCamera();
+      if (result && result.employeeId === selectedEmployee) {
+        setFaceState("verified");
+        setFaceMessage(
+          `✅ Xác thực thành công (độ chính xác ${result.confidence}%)`,
+        );
+      } else {
+        setFaceState("failed");
+        // Check if ANY employee was matched (wrong person)
+        if (result && result.employeeId !== selectedEmployee) {
+          setFaceMessage("❌ Khuôn mặt không khớp với nhân viên được chọn");
+        } else {
+          setFaceMessage("❌ Không nhận diện được khuôn mặt trong hệ thống");
+        }
+      }
+    } catch {
+      setFaceState("failed");
+      setFaceMessage("Lỗi khi nhận diện khuôn mặt");
+    }
+  }
+
+  // Check if face verification is required: required for non-admin employees
+  // checking in/out for themselves. Admins checking for others are exempt.
+  const faceRequired =
+    !canSelectEmployee || selectedEmployee === (user?.employeeId ?? "");
+  const canCheckIn =
+    gpsState === "in-range" && (!faceRequired || faceState === "verified");
+  // ─────────────────────────────────────────────────────────────────────────
+
   async function handleCheckInOut() {
     if (gpsState !== "in-range") {
       setResultMessage("Vui lòng xác nhận vị trí GPS trước khi chấm công.");
+      setResultType("warning");
+      return;
+    }
+    if (faceRequired && faceState !== "verified") {
+      setResultMessage("Vui lòng xác thực khuôn mặt trước khi chấm công.");
       setResultType("warning");
       return;
     }
@@ -261,6 +358,9 @@ export default function Attendance() {
           `${employee.name} — Vào ca thành công! ${isLate ? `Muon ${record.lateMinutes} phut` : "Dung gio"} · ${locationName}`,
         );
         setResultType(isLate ? "warning" : "success");
+        // Reset face state after successful check-in
+        setFaceState("idle");
+        setFaceMessage("");
       } else {
         const record = await checkOut({
           employeeId: employee.id,
@@ -271,8 +371,10 @@ export default function Attendance() {
           `${employee.name} — Ra ca thành công! ${isEarly ? `Ve som ${record.earlyLeaveMinutes}p` : "Dung gio"} · ${record.workingHours}h · ${locationName}`,
         );
         setResultType(isEarly ? "warning" : "success");
+        setFaceState("idle");
+        setFaceMessage("");
       }
-      await loadTodayPage(1); // refresh về trang đầu sau khi chấm
+      await loadTodayPage(1);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Loi cham cong";
       setResultMessage(msg);
@@ -515,10 +617,110 @@ export default function Attendance() {
             )}
           </div>
 
+          {/* Face Recognition Card */}
+          {faceRequired && (
+            <div
+              className={`rounded-2xl border p-4 sm:p-5 transition-all ${
+                faceState === "verified"
+                  ? "bg-green-50 border-green-200"
+                  : faceState === "failed"
+                    ? "bg-red-50 border-red-200"
+                    : "bg-gray-50 border-gray-200"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                  <Camera className="w-4 h-4" />
+                  Xác thực khuôn mặt (AI)
+                </p>
+                {faceState === "verified" && (
+                  <span className="text-xs text-green-600 font-medium">
+                    ✅ Đã xác thực
+                  </span>
+                )}
+              </div>
+
+              {/* Camera preview */}
+              {(faceState === "camera" || faceState === "scanning") && (
+                <div className="relative mb-3">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full rounded-xl object-cover max-h-48"
+                  />
+                  {faceState === "scanning" && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-xl">
+                      <Loader2 className="w-8 h-8 animate-spin text-white" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Status message */}
+              {faceMessage && (
+                <p
+                  className={`text-xs mb-3 ${
+                    faceState === "verified"
+                      ? "text-green-700"
+                      : faceState === "failed"
+                        ? "text-red-700"
+                        : "text-gray-600"
+                  }`}
+                >
+                  {faceMessage}
+                </p>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex gap-2">
+                {faceState === "idle" || faceState === "failed" ? (
+                  <button
+                    onClick={openFaceCamera}
+                    disabled={gpsState !== "in-range"}
+                    className="flex items-center gap-1.5 px-4 py-2 text-sm bg-white border border-gray-300 rounded-xl hover:bg-gray-50 disabled:opacity-50 font-medium shadow-sm"
+                  >
+                    <Camera className="w-4 h-4" />
+                    {faceState === "failed" ? "Thử lại" : "Mở camera"}
+                  </button>
+                ) : faceState === "camera" ? (
+                  <>
+                    <button
+                      onClick={captureFace}
+                      className="flex items-center gap-1.5 px-4 py-2 text-sm bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium"
+                    >
+                      <UserCheck className="w-4 h-4" />
+                      Chụp &amp; Xác thực
+                    </button>
+                    <button
+                      onClick={closeFaceCamera}
+                      className="px-3 py-2 text-sm border border-gray-300 rounded-xl hover:bg-gray-100"
+                    >
+                      Hủy
+                    </button>
+                  </>
+                ) : faceState === "verified" ? (
+                  <button
+                    onClick={() => {
+                      setFaceState("idle");
+                      setFaceMessage("");
+                    }}
+                    className="text-xs text-gray-500 underline"
+                  >
+                    Xác thực lại
+                  </button>
+                ) : (
+                  <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Check-in/out Button */}
           <button
             onClick={handleCheckInOut}
-            disabled={gpsState !== "in-range" || processing}
+            disabled={!canCheckIn || processing}
             className={`w-full py-4 sm:py-4 rounded-2xl text-white font-bold text-base sm:text-lg transition-all shadow-lg disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-3 active:scale-[0.98] ${
               mode === "check-in"
                 ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
