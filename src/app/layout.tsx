@@ -1,8 +1,6 @@
 "use client";
 
 import { AuthProvider } from "@/contexts/AuthContext";
-import "jspreadsheet-ce/dist/jspreadsheet.css";
-import "jsuites/dist/jsuites.css";
 import "./globals.css";
 
 export default function RootLayout({
