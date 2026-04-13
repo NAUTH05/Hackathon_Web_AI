@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 .DS_Store
-.next/
+.next/cache/
 node_modules/
 *.log
 /*.log

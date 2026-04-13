@@ -1,0 +1,3 @@
+{
+  "/(protected)/timesheet/page": "app/(protected)/timesheet/page.js"
+}
