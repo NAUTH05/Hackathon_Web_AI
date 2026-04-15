@@ -2,10 +2,11 @@
 __pycache__/
 *.pyc
 .DS_Store
-.next/cache/
+.next/
 node_modules/
 *.log
 /*.log
 loadtest/
+.env
 Feedback_IMGS/
-backend/
+.next/

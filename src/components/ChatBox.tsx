@@ -57,16 +57,9 @@ export default function ChatBox() {
     setIsLoading(true);
 
     try {
-      const token =
-        typeof window !== "undefined"
-          ? (localStorage.getItem("token") ?? "")
-          : "";
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: trimmed,
           history: buildHistory(messages),

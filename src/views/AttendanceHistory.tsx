@@ -71,11 +71,9 @@ export default function AttendanceHistory() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [search, setSearch] = useState("");
-  const [searchInput, setSearchInput] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterDate, setFilterDate] = useState("");
   const [filterEmployee, setFilterEmployee] = useState("");
-  const [filterEmployeeInput, setFilterEmployeeInput] = useState("");
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(
@@ -326,24 +324,18 @@ export default function AttendanceHistory() {
           <div className="relative flex-1 min-w-[200px] max-w-sm">
             <input
               type="text"
-              placeholder="🔍 Tìm theo tên... (Enter để tìm)"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") setSearch(searchInput);
-              }}
+              placeholder="🔍 Tìm theo tên..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div className="relative flex-1 min-w-[160px] max-w-[200px]">
             <input
               type="text"
-              placeholder="🔍 Mã nhân viên... (Enter để tìm)"
-              value={filterEmployeeInput}
-              onChange={(e) => setFilterEmployeeInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") setFilterEmployee(filterEmployeeInput);
-              }}
+              placeholder="🔍 Mã nhân viên..."
+              value={filterEmployee}
+              onChange={(e) => setFilterEmployee(e.target.value)}
               className="w-full px-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
