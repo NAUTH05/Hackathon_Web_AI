@@ -1,0 +1,34 @@
+{
+  "name": "chamcong-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Face Recognition Attendance System",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "seed": "node src/db/seed.js",
+    "loadtest:smoke": "k6 run loadtest/smoke-health.js",
+    "loadtest:auth": "k6 run loadtest/login-and-me.js",
+    "loadtest:shift-assign": "k6 run loadtest/shift-assign-bulk.js",
+    "loadtest:attendance-no-gps": "k6 run loadtest/attendance-checkin-no-gps-bulk.js",
+    "loadtest:attendance-checkout-no-gps": "k6 run loadtest/attendance-checkout-no-gps-bulk.js",
+    "loadtest:leave-request": "k6 run loadtest/leave-request-bulk.js",
+    "docs:validate": "node -e \"const spec=require('./src/docs/swagger'); console.log(spec.openapi, 'paths:', Object.keys(spec.paths||{}).length);\""
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.19.1",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
