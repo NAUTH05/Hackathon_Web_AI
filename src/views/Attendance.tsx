@@ -15,10 +15,15 @@ import {
   Search,
   Shield,
   XCircle,
+  Camera,
+  ScanFace,
+  VideoOff,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { showToast } from "../components/Toast";
 import { useAuth } from "../contexts/AuthContext";
+import { employeesApi } from "../services/api";
+import { captureSnapshot, compareFaces, detectFace, loadModels } from "../services/faceRecognition";
 import {
   checkIn,
   checkOut,
@@ -118,6 +123,20 @@ export default function Attendance() {
   const [todayLoading, setTodayLoading] = useState(false);
   const TODAY_LIMIT = 15;
 
+  // Face Verification State
+  const [targetFaceDescriptor, setTargetFaceDescriptor] = useState<number[] | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [faceMatched, setFaceMatched] = useState(false);
+  const [detectingFace, setDetectingFace] = useState(false);
+  const [faceMessage, setFaceMessage] = useState("");
+  const [snapshot, setSnapshot] = useState<string | null>(null);
+  const [modelsReady, setModelsReady] = useState(false);
+
+  // Admin bypass
+  const isBypassFace = canSelectEmployee && selectedEmployee !== user?.employeeId;
+
   // Check if device is mobile (client-side only)
   useEffect(() => {
     setIsMobile(isMobileDevice());
@@ -144,6 +163,105 @@ export default function Attendance() {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Load Face Models
+  useEffect(() => {
+    if (!isAdmin) {
+      loadModels().then(() => setModelsReady(true)).catch(console.error);
+    } else {
+      setModelsReady(true);
+    }
+  }, [isAdmin]);
+
+  // Handle Camera Cleanup
+  useEffect(() => {
+    return () => {
+      if (stream) stream.getTracks().forEach((track) => track.stop());
+    };
+  }, [stream]);
+
+  // Load Target Face
+  useEffect(() => {
+    async function loadFace() {
+      if (!selectedEmployee) return;
+      setTargetFaceDescriptor(null);
+      setFaceMatched(false);
+      setSnapshot(null);
+      setFaceMessage("");
+
+      try {
+        const emp = await employeesApi.get(selectedEmployee) as { faceDescriptor?: number[] };
+        if (emp.faceDescriptor && emp.faceDescriptor.length > 0) {
+          setTargetFaceDescriptor(emp.faceDescriptor);
+        } else {
+          setFaceMessage("Nhân viên chưa đăng ký khuôn mặt trên hệ thống.");
+        }
+      } catch (err) {
+        console.error("Failed to load face descriptor", err);
+      }
+    }
+    loadFace();
+  }, [selectedEmployee]);
+
+  function startCamera() {
+    setFaceMessage("");
+    setFaceMatched(false);
+    setSnapshot(null);
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "user" } })
+      .then((s) => {
+        setStream(s);
+        if (videoRef.current) {
+          videoRef.current.srcObject = s;
+        }
+        setCameraActive(true);
+      })
+      .catch((err) => {
+        setFaceMessage("Không thể truy cập camera. Vui lòng cấp quyền vị trí và máy ảnh.");
+      });
+  }
+
+  function stopCamera() {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      setStream(null);
+    }
+    setCameraActive(false);
+  }
+
+  async function handleScanFace() {
+    if (!videoRef.current || !cameraActive || !targetFaceDescriptor) return;
+    setDetectingFace(true);
+    setFaceMessage("Đang phân tích khuôn mặt...");
+
+    try {
+      const detection = await detectFace(videoRef.current);
+      if (!detection) {
+        setFaceMessage("Không tìm thấy khuôn mặt, xin hãy nhìn thẳng vào camera.");
+        setDetectingFace(false);
+        return;
+      }
+
+      const snap = captureSnapshot(videoRef.current);
+      const currentDescriptor = detection.descriptor;
+      const targetFloatArray = new Float32Array(targetFaceDescriptor);
+      
+      const { distance, match } = compareFaces(currentDescriptor, targetFloatArray, 0.6);
+      
+      if (match) {
+        setFaceMatched(true);
+        setSnapshot(snap);
+        setFaceMessage(`Khớp khuôn mặt (${Math.round((1 - distance)*100)}%). Bạn có thể chấm công ngay.`);
+        stopCamera();
+      } else {
+        setFaceMessage("Khuôn mặt KHÔNG khớp với dữ liệu đăng ký!");
+      }
+    } catch (err) {
+      setFaceMessage("Lỗi xử lý khuôn mặt.");
+    } finally {
+      setDetectingFace(false);
+    }
+  }
 
   // Load today records cho 1 page
   const loadTodayPage = useCallback(
@@ -255,6 +373,7 @@ export default function Attendance() {
           shiftId: selectedShift,
           latitude: currentCoords?.lat,
           longitude: currentCoords?.lon,
+          checkInImage: snapshot || undefined,
         });
         const isLate = record.status === "late";
         setResultMessage(
@@ -265,6 +384,7 @@ export default function Attendance() {
         const record = await checkOut({
           employeeId: employee.id,
           shiftId: selectedShift,
+          checkOutImage: snapshot || undefined,
         });
         const isEarly = record.status === "early-leave";
         setResultMessage(
@@ -515,10 +635,94 @@ export default function Attendance() {
             )}
           </div>
 
+          {/* Face Verification Card */}
+          {!isBypassFace && (
+            <div className={`rounded-2xl border p-4 sm:p-5 transition-all ${faceMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200 shadow-sm"}`}>
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2">
+                  <ScanFace className={`w-5 h-5 ${faceMatched ? "text-green-600" : "text-primary-600"}`} />
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    Xác thực khuôn mặt
+                  </h3>
+                </div>
+                {faceMatched && (
+                   <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Khớp khuôn mặt</span>
+                )}
+              </div>
+
+              {!targetFaceDescriptor ? (
+                <div className="text-sm text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 flex items-center gap-2">
+                  <XCircle className="w-4 h-4"/>
+                  {faceMessage || "Đang kiểm tra dữ liệu..."}
+                </div>
+              ) : !modelsReady ? (
+                <div className="flex items-center justify-center py-4">
+                   <Loader2 className="w-5 h-5 animate-spin text-primary-500 mr-2"/>
+                   <span className="text-sm text-gray-500">Đang tải AI...</span>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {!snapshot && (
+                    <div className="relative aspect-video bg-gray-900 rounded-xl overflow-hidden flex items-center justify-center max-w-sm mx-auto shadow-inner">
+                      {!cameraActive ? (
+                        <div className="text-center p-4">
+                           <VideoOff className="w-8 h-8 text-gray-400 mx-auto mb-2"/>
+                           <button
+                             onClick={startCamera}
+                             className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-500 transition-colors shadow-sm flex items-center gap-2"
+                           >
+                             <Camera className="w-4 h-4"/> Mở Camera chụp mặt
+                           </button>
+                        </div>
+                      ) : (
+                        <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover ${detectingFace ? "opacity-30" : ""}`}></video>
+                      )}
+                      {detectingFace && (
+                        <div className="absolute inset-0 flex items-center justify-center z-10">
+                           <Loader2 className="w-10 h-10 animate-spin text-white drop-shadow-md"/>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {snapshot && (
+                     <div className="max-w-[200px] mx-auto relative rounded-xl overflow-hidden border-2 border-green-400 shadow-md">
+                       <img src={snapshot} alt="Mặt đã quét" className="w-full object-cover" />
+                       <div className="absolute bottom-1 right-1 bg-white p-1 rounded-full shadow-sm text-green-600">
+                         <CheckCircle2 className="w-4 h-4"/>
+                       </div>
+                     </div>
+                  )}
+
+                  {faceMessage && (
+                     <div className={`text-sm text-center px-3 py-2 rounded-lg ${faceMatched ? "text-green-700 bg-green-100/50" : "text-red-600 bg-red-50"}`}>
+                       {faceMessage}
+                     </div>
+                  )}
+
+                  {cameraActive && !snapshot && (
+                    <div className="flex justify-center gap-3">
+                       <button onClick={stopCamera} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200">Hủy</button>
+                       <button onClick={handleScanFace} disabled={detectingFace} className="px-5 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+                         Bắt đầu quét
+                       </button>
+                    </div>
+                  )}
+                  
+                  {snapshot && (
+                     <div className="flex justify-center">
+                       <button onClick={startCamera} className="text-sm text-primary-600 hover:text-primary-700 font-medium">Chụp lại</button>
+                     </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Check-in/out Button */}
           <button
             onClick={handleCheckInOut}
-            disabled={gpsState !== "in-range" || processing}
+            disabled={gpsState !== "in-range" || processing || (!isBypassFace && !faceMatched)}
             className={`w-full py-4 sm:py-4 rounded-2xl text-white font-bold text-base sm:text-lg transition-all shadow-lg disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-3 active:scale-[0.98] ${
               mode === "check-in"
                 ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"

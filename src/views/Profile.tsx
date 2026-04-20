@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { authApi } from "../services/api";
 import { ROLE_LEVEL_LABELS } from "../types";
+import { FaceEnrollment } from "../components/FaceEnrollment";
 
 interface ProfileData {
   id: string;
@@ -321,8 +322,13 @@ export default function Profile() {
           </div>
         </div>
 
+        {/* Face Enrollment (Chấm công) */}
+        {profile.employeeId && (
+           <FaceEnrollment employeeId={profile.employeeId} />
+        )}
+
         {/* Change password section */}
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mt-6">
           <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
             <Lock className="w-4 h-4 text-gray-500" />
             <h3 className="text-sm font-semibold text-gray-700">
