@@ -212,19 +212,29 @@ export default function Attendance() {
     }
   }, [cameraActive, stream]);
 
-  function startCamera() {
+  async function startCamera() {
     setFaceMessage("");
     setFaceMatched(false);
     setSnapshot(null);
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: "user" } })
-      .then((s) => {
-        setStream(s);
-        setCameraActive(true);
-      })
-      .catch((err) => {
-        setFaceMessage("Không thể truy cập camera. Vui lòng cấp quyền vị trí và máy ảnh.");
-      });
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("SECURE_CONTEXT_REQUIRED");
+      }
+      let s: MediaStream;
+      try {
+        s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      } catch (err) {
+        console.warn("User facing camera not found, trying default video...", err);
+        s = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+      setStream(s);
+      setCameraActive(true);
+    } catch (err: any) {
+      console.error("Camera access error:", err);
+      setFaceMessage(err.message === "SECURE_CONTEXT_REQUIRED"
+        ? "Quét mặt bị chặn"
+        : "Không thể truy cập camera. Vui lòng cấp quyền hệ thống hoặc kiểm tra cáp.");
+    }
   }
 
   function stopCamera() {
@@ -251,13 +261,13 @@ export default function Attendance() {
       const snap = captureSnapshot(videoRef.current);
       const currentDescriptor = detection.descriptor;
       const targetFloatArray = new Float32Array(targetFaceDescriptor);
-      
+
       const { distance, match } = compareFaces(currentDescriptor, targetFloatArray, 0.6);
-      
+
       if (match) {
         setFaceMatched(true);
         setSnapshot(snap);
-        setFaceMessage(`Khớp khuôn mặt (${Math.round((1 - distance)*100)}%). Bạn có thể chấm công ngay.`);
+        setFaceMessage(`Khớp khuôn mặt (${Math.round((1 - distance) * 100)}%). Bạn có thể chấm công ngay.`);
         stopCamera();
       } else {
         setFaceMessage("Khuôn mặt KHÔNG khớp với dữ liệu đăng ký!");
@@ -319,7 +329,11 @@ export default function Attendance() {
 
     if (!navigator.geolocation) {
       setGpsState("error");
-      setGpsMessage("Trình duyệt không hỗ trợ GPS");
+      if (window.isSecureContext === false) {
+        setGpsMessage("Vị trí bị chặn");
+      } else {
+        setGpsMessage("Trình duyệt không hỗ trợ GPS, hoặc máy đang tắt dịch vụ định vị.");
+      }
       return;
     }
 
@@ -347,10 +361,13 @@ export default function Attendance() {
       (error) => {
         if (error.code === error.PERMISSION_DENIED) {
           setGpsState("denied");
-          setGpsMessage("Bạn cần cấp quyền truy cập vị trí để chấm công.");
+          setGpsMessage("Bạn cần cấp quyền vị trí (Location) trong Cài đặt Trình duyệt/Điện thoại.");
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          setGpsState("error");
+          setGpsMessage("Không tìm thấy thông tin vị trí. Vui lòng bật GPS/Định vị thiết bị.");
         } else {
           setGpsState("error");
-          setGpsMessage("Không thể xác định vị trí. Vui lòng thử lại.");
+          setGpsMessage("Lỗi thời gian tải hoặc không thể xác định vị trí.");
         }
       },
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
@@ -491,22 +508,20 @@ export default function Attendance() {
               <div className="flex bg-gray-100 rounded-xl p-1">
                 <button
                   onClick={() => setMode("check-in")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    mode === "check-in"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === "check-in"
                       ? "bg-white text-green-700 shadow-sm"
                       : "text-gray-500 hover:text-gray-700"
-                  }`}
+                    }`}
                 >
                   <LogIn className="w-4 h-4" />
                   Vào ca
                 </button>
                 <button
                   onClick={() => setMode("check-out")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    mode === "check-out"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === "check-out"
                       ? "bg-white text-orange-700 shadow-sm"
                       : "text-gray-500 hover:text-gray-700"
-                  }`}
+                    }`}
                 >
                   <LogOut className="w-4 h-4" />
                   Ra ca
@@ -532,12 +547,12 @@ export default function Attendance() {
                   const q = employeeSearch.trim().toLowerCase();
                   const filtered = q
                     ? employees
-                        .filter(
-                          (e) =>
-                            e.employeeCode.toLowerCase().includes(q) ||
-                            e.name.toLowerCase().includes(q),
-                        )
-                        .slice(0, 20)
+                      .filter(
+                        (e) =>
+                          e.employeeCode.toLowerCase().includes(q) ||
+                          e.name.toLowerCase().includes(q),
+                      )
+                      .slice(0, 20)
                     : employees.slice(0, 20);
                   return (
                     <div className="relative">
@@ -652,19 +667,19 @@ export default function Attendance() {
                   </h3>
                 </div>
                 {faceMatched && (
-                   <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Khớp khuôn mặt</span>
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Khớp khuôn mặt</span>
                 )}
               </div>
 
               {!targetFaceDescriptor ? (
                 <div className="text-sm text-red-600 bg-red-50 p-3 rounded-xl border border-red-100 flex items-center gap-2">
-                  <XCircle className="w-4 h-4"/>
+                  <XCircle className="w-4 h-4" />
                   {faceMessage || "Đang kiểm tra dữ liệu..."}
                 </div>
               ) : !modelsReady ? (
                 <div className="flex items-center justify-center py-4">
-                   <Loader2 className="w-5 h-5 animate-spin text-primary-500 mr-2"/>
-                   <span className="text-sm text-gray-500">Đang tải AI...</span>
+                  <Loader2 className="w-5 h-5 animate-spin text-primary-500 mr-2" />
+                  <span className="text-sm text-gray-500">Đang tải AI...</span>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -672,53 +687,53 @@ export default function Attendance() {
                     <div className="relative aspect-video bg-gray-900 rounded-xl overflow-hidden flex items-center justify-center max-w-sm mx-auto shadow-inner">
                       {!cameraActive ? (
                         <div className="text-center p-4">
-                           <VideoOff className="w-8 h-8 text-gray-400 mx-auto mb-2"/>
-                           <button
-                             onClick={startCamera}
-                             className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-500 transition-colors shadow-sm flex items-center gap-2"
-                           >
-                             <Camera className="w-4 h-4"/> Mở Camera chụp mặt
-                           </button>
+                          <VideoOff className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                          <button
+                            onClick={startCamera}
+                            className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-500 transition-colors shadow-sm flex items-center gap-2"
+                          >
+                            <Camera className="w-4 h-4" /> Mở Camera chụp mặt
+                          </button>
                         </div>
                       ) : (
                         <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-cover ${detectingFace ? "opacity-30" : ""}`}></video>
                       )}
                       {detectingFace && (
                         <div className="absolute inset-0 flex items-center justify-center z-10">
-                           <Loader2 className="w-10 h-10 animate-spin text-white drop-shadow-md"/>
+                          <Loader2 className="w-10 h-10 animate-spin text-white drop-shadow-md" />
                         </div>
                       )}
                     </div>
                   )}
 
                   {snapshot && (
-                     <div className="max-w-[200px] mx-auto relative rounded-xl overflow-hidden border-2 border-green-400 shadow-md">
-                       <img src={snapshot} alt="Mặt đã quét" className="w-full object-cover" />
-                       <div className="absolute bottom-1 right-1 bg-white p-1 rounded-full shadow-sm text-green-600">
-                         <CheckCircle2 className="w-4 h-4"/>
-                       </div>
-                     </div>
+                    <div className="max-w-[200px] mx-auto relative rounded-xl overflow-hidden border-2 border-green-400 shadow-md">
+                      <img src={snapshot} alt="Mặt đã quét" className="w-full object-cover" />
+                      <div className="absolute bottom-1 right-1 bg-white p-1 rounded-full shadow-sm text-green-600">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </div>
+                    </div>
                   )}
 
                   {faceMessage && (
-                     <div className={`text-sm text-center px-3 py-2 rounded-lg ${faceMatched ? "text-green-700 bg-green-100/50" : "text-red-600 bg-red-50"}`}>
-                       {faceMessage}
-                     </div>
+                    <div className={`text-sm text-center px-3 py-2 rounded-lg ${faceMatched ? "text-green-700 bg-green-100/50" : "text-red-600 bg-red-50"}`}>
+                      {faceMessage}
+                    </div>
                   )}
 
                   {cameraActive && !snapshot && (
                     <div className="flex justify-center gap-3">
-                       <button onClick={stopCamera} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200">Hủy</button>
-                       <button onClick={handleScanFace} disabled={detectingFace} className="px-5 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
-                         Bắt đầu quét
-                       </button>
+                      <button onClick={stopCamera} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200">Hủy</button>
+                      <button onClick={handleScanFace} disabled={detectingFace} className="px-5 py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+                        Bắt đầu quét
+                      </button>
                     </div>
                   )}
-                  
+
                   {snapshot && (
-                     <div className="flex justify-center">
-                       <button onClick={startCamera} className="text-sm text-primary-600 hover:text-primary-700 font-medium">Chụp lại</button>
-                     </div>
+                    <div className="flex justify-center">
+                      <button onClick={startCamera} className="text-sm text-primary-600 hover:text-primary-700 font-medium">Chụp lại</button>
+                    </div>
                   )}
                 </div>
               )}
@@ -729,11 +744,10 @@ export default function Attendance() {
           <button
             onClick={handleCheckInOut}
             disabled={gpsState !== "in-range" || processing || (!isBypassFace && !faceMatched)}
-            className={`w-full py-4 sm:py-4 rounded-2xl text-white font-bold text-base sm:text-lg transition-all shadow-lg disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-3 active:scale-[0.98] ${
-              mode === "check-in"
+            className={`w-full py-4 sm:py-4 rounded-2xl text-white font-bold text-base sm:text-lg transition-all shadow-lg disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-3 active:scale-[0.98] ${mode === "check-in"
                 ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
                 : "bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700"
-            }`}
+              }`}
           >
             {processing ? (
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -752,15 +766,14 @@ export default function Attendance() {
           {/* Result message */}
           {resultMessage && (
             <div
-              className={`rounded-xl p-4 text-sm font-medium flex items-center gap-2 ${
-                resultType === "success"
+              className={`rounded-xl p-4 text-sm font-medium flex items-center gap-2 ${resultType === "success"
                   ? "bg-green-50 border border-green-200 text-green-700"
                   : resultType === "error"
                     ? "bg-red-50 border border-red-200 text-red-700"
                     : resultType === "warning"
                       ? "bg-yellow-50 border border-yellow-200 text-yellow-700"
                       : "bg-blue-50 border border-blue-200 text-blue-700"
-              }`}
+                }`}
             >
               {resultType === "success" && (
                 <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
@@ -844,15 +857,14 @@ export default function Attendance() {
 
                   {/* Status badge */}
                   <span
-                    className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                      record.status === "on-time"
+                    className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${record.status === "on-time"
                         ? "bg-green-100 text-green-700"
                         : record.status === "late"
                           ? "bg-yellow-100 text-yellow-700"
                           : record.status === "early-leave"
                             ? "bg-orange-100 text-orange-700"
                             : "bg-gray-100 text-gray-500"
-                    }`}
+                      }`}
                   >
                     {record.status === "on-time"
                       ? "Đúng giờ"
@@ -893,11 +905,10 @@ export default function Attendance() {
                         key={p}
                         onClick={() => loadTodayPage(p)}
                         disabled={todayLoading}
-                        className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${
-                          p === todayPage
+                        className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${p === todayPage
                             ? "bg-primary-600 text-white"
                             : "hover:bg-gray-100 text-gray-600"
-                        }`}
+                          }`}
                       >
                         {p}
                       </button>

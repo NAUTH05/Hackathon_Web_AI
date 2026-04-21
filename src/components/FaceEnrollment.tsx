@@ -39,7 +39,7 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
 
   useEffect(() => {
     loadModels().then(() => setLoadingModels(false)).catch(e => {
-        setResult({status: "error", message: "Lỗi tải mô hình AI. Vui lòng tải lại trang."});
+      setResult({ status: "error", message: "Lỗi tải mô hình AI. Vui lòng tải lại trang." });
     });
     return () => {
       stopCamera();
@@ -55,22 +55,30 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
     }
   }, [cameraActive, stream]);
 
-  function startCamera() {
+  async function startCamera() {
     setResult({ status: "idle", message: "" });
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: "user" } })
-      .then((s) => {
-        setStream(s);
-        setCameraActive(true);
-      })
-      .catch((err) => {
-        console.error("Camera access error:", err);
-        setResult({
-          status: "error",
-          message:
-            "Không thể truy cập camera. Vui lòng cấp quyền trong trình duyệt.",
-        });
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("SECURE_CONTEXT_REQUIRED");
+      }
+      let s: MediaStream;
+      try {
+        s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      } catch (err) {
+        console.warn("User facing camera not found, trying default video...", err);
+        s = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+      setStream(s);
+      setCameraActive(true);
+    } catch (err: any) {
+      console.error("Camera access error:", err);
+      setResult({
+        status: "error",
+        message: err.message === "SECURE_CONTEXT_REQUIRED"
+          ? "Lỗi bảo mật: Trình duyệt chặn Camera"
+          : "Không thể truy cập camera. Vui lòng kiểm tra cáp/kết nối hoặc cấp quyền trong trình duyệt.",
       });
+    }
   }
 
   function stopCamera() {
@@ -96,7 +104,7 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
         setDetecting(false);
         return;
       }
-      
+
       const snapshot = captureSnapshot(videoRef.current);
       const faceDescriptor = Array.from(detection.descriptor) as number[];
 
@@ -132,7 +140,7 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
         </h3>
         {hasExistingDescriptor && (
           <span className="ml-auto text-[11px] bg-green-100 text-green-700 px-2.5 py-1 rounded-full flex items-center gap-1 font-bold border border-green-200">
-             <CheckCircle2 className="w-3.5 h-3.5"/> Đã đăng ký
+            <CheckCircle2 className="w-3.5 h-3.5" /> Đã đăng ký
           </span>
         )}
       </div>
@@ -155,7 +163,7 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
                       onClick={startCamera}
                       className="px-5 py-2.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-500 transition-all shadow-md active:scale-95 flex items-center gap-2 mx-auto"
                     >
-                      <Camera className="w-4 h-4"/> Bật Camera
+                      <Camera className="w-4 h-4" /> Bật Camera
                     </button>
                   </div>
                 ) : (
@@ -167,13 +175,13 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
                     className={`w-full h-full object-cover ${detecting ? "opacity-30 grayscale" : "opacity-100"}`}
                   />
                 )}
-                
+
                 {cameraActive && !detecting && (
-                   <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                     <div className="w-48 h-64 border-2 border-dashed border-white/60 rounded-[100px] shadow-[0_0_0_2000px_rgba(0,0,0,0.6)] transition-all"></div>
-                   </div>
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                    <div className="w-48 h-64 border-2 border-dashed border-white/60 rounded-[100px] shadow-[0_0_0_2000px_rgba(0,0,0,0.6)] transition-all"></div>
+                  </div>
                 )}
-                
+
                 {detecting && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center z-10">
                     <Loader2 className="w-12 h-12 animate-spin text-primary-400 mb-3 drop-shadow-lg" />
@@ -186,34 +194,33 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
             {result.snapshot && (
               <div className="relative max-w-sm mx-auto text-center space-y-4">
                 <div className="p-1.5 bg-white border border-gray-200 shadow-md rounded-2xl">
-                    <img src={result.snapshot} alt="Scanned Face" className="w-full rounded-xl object-cover" />
+                  <img src={result.snapshot} alt="Scanned Face" className="w-full rounded-xl object-cover" />
                 </div>
                 <button
                   onClick={() => {
-                    setResult({status: "idle", message: ""});
+                    setResult({ status: "idle", message: "" });
                     startCamera();
                   }}
                   className="px-4 py-2.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-xl hover:bg-gray-200 transition-colors inline-flex items-center gap-2 shadow-sm border border-gray-200"
                 >
-                  <RefreshCw className="w-4 h-4"/> Chụp lại ảnh khác
+                  <RefreshCw className="w-4 h-4" /> Chụp lại ảnh khác
                 </button>
               </div>
             )}
 
             {result.message && (
-               <div
-               className={`text-sm px-4 py-3 rounded-xl flex items-start gap-2.5 max-w-md mx-auto shadow-sm ${
-                 result.status === "success"
-                   ? "bg-green-50 text-green-700 border border-green-200"
-                   : result.status === "error"
-                   ? "bg-red-50 text-red-700 border border-red-200"
-                   : "bg-blue-50 text-blue-700 border border-blue-200"
-               }`}
-             >
-               {result.status === "success" && <CheckCircle2 className="w-4.5 h-4.5 shrink-0 mt-0.5"/>}
-               {result.status === "error" && <AlertTriangle className="w-4.5 h-4.5 shrink-0 mt-0.5" />}
-               <span className="font-medium leading-relaxed">{result.message}</span>
-             </div>
+              <div
+                className={`text-sm px-4 py-3 rounded-xl flex items-start gap-2.5 max-w-md mx-auto shadow-sm ${result.status === "success"
+                    ? "bg-green-50 text-green-700 border border-green-200"
+                    : result.status === "error"
+                      ? "bg-red-50 text-red-700 border border-red-200"
+                      : "bg-blue-50 text-blue-700 border border-blue-200"
+                  }`}
+              >
+                {result.status === "success" && <CheckCircle2 className="w-4.5 h-4.5 shrink-0 mt-0.5" />}
+                {result.status === "error" && <AlertTriangle className="w-4.5 h-4.5 shrink-0 mt-0.5" />}
+                <span className="font-medium leading-relaxed">{result.message}</span>
+              </div>
             )}
 
             {cameraActive && !result.snapshot && (

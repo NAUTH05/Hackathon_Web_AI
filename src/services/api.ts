@@ -87,7 +87,7 @@ export const employeesApi = {
   delete: (id: string) => request<void>('DELETE', `/employees/${encodeURIComponent(id)}`),
   saveFace: (id: string, data: { faceDescriptor: number[]; faceImage: string }) =>
     request<void>('POST', `/employees/${encodeURIComponent(id)}/face`, data),
-  getFaceDescriptors: () => request<{ employeeId: string; faceDescriptor: number[] }[]>('GET', '/employees/face-descriptors'),
+  getFaceDescriptors: () => request<{ id: string; faceDescriptor: number[] }[]>('GET', '/employees/face-descriptors'),
 };
 
 // ============ Departments ============

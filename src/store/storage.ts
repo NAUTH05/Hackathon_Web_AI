@@ -97,7 +97,7 @@ export async function getFaceDescriptors(): Promise<Map<string, Float32Array>> {
   const map = new Map<string, Float32Array>();
   data.forEach((d) => {
     if (d.faceDescriptor && d.faceDescriptor.length > 0) {
-      map.set(d.employeeId, new Float32Array(d.faceDescriptor));
+      map.set(d.id, new Float32Array(d.faceDescriptor));
     }
   });
   return map;

@@ -80,7 +80,23 @@ router.get('/', authenticate, async (req, res) => {
     );
 
     res.json({
-      data: toCamelCaseArray(rows),
+      data: rows.map(r => {
+        const employee = toCamelCase(r);
+        if (r.face_descriptor) {
+          try {
+            const buffer = Buffer.from(r.face_descriptor);
+            const floatArray = [];
+            for (let i = 0; i < buffer.length; i += 4) {
+              floatArray.push(buffer.readFloatLE(i));
+            }
+            employee.faceDescriptor = floatArray;
+          } catch (e) {
+            console.error(`List descriptor error for ${r.employee_code}:`, e.message);
+            employee.faceDescriptor = null;
+          }
+        }
+        return employee;
+      }),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
     });
   } catch (err) {
@@ -97,13 +113,30 @@ router.get('/face-descriptors', authenticate, async (req, res) => {
        FROM employees
        WHERE face_descriptor IS NOT NULL AND is_active = 1`
     );
-    const result = rows.map(r => ({
-      id: r.id,
-      name: r.name,
-      employeeCode: r.employee_code,
-      faceDescriptor: r.face_descriptor ? Array.from(new Float32Array(r.face_descriptor.buffer, r.face_descriptor.byteOffset, r.face_descriptor.byteLength / 4)) : null,
-      faceImage: r.face_image,
-    }));
+
+    const result = rows.map(r => {
+      let descriptor = null;
+      if (r.face_descriptor) {
+        try {
+          // Alignment-independent conversion using readFloatLE
+          const buffer = Buffer.from(r.face_descriptor);
+          const floatArray = [];
+          for (let i = 0; i < buffer.length; i += 4) {
+            floatArray.push(buffer.readFloatLE(i));
+          }
+          descriptor = floatArray;
+        } catch (e) {
+          console.error(`Invalid descriptor for ${r.employee_code}:`, e.message);
+        }
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        employeeCode: r.employee_code,
+        faceDescriptor: descriptor,
+        faceImage: r.face_image,
+      };
+    });
     res.json(result);
   } catch (err) {
     console.error('Get face descriptors error:', err);
@@ -122,7 +155,25 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
-    res.json(toCamelCase(rows[0]));
+    
+    const employee = toCamelCase(rows[0]);
+    
+    // Explicitly format faceDescriptor as number array for frontend compatibility
+    if (rows[0].face_descriptor) {
+      try {
+        const buffer = Buffer.from(rows[0].face_descriptor);
+        const floatArray = [];
+        for (let i = 0; i < buffer.length; i += 4) {
+          floatArray.push(buffer.readFloatLE(i));
+        }
+        employee.faceDescriptor = floatArray;
+      } catch (e) {
+        console.error('Descriptor parse error:', e.message);
+        employee.faceDescriptor = null;
+      }
+    }
+
+    res.json(employee);
   } catch (err) {
     console.error('Get employee error:', err);
     res.status(500).json({ error: 'Lỗi server' });
@@ -261,7 +312,9 @@ router.post('/:id/face', authenticate, adminOnly, async (req, res) => {
     let descriptorBuffer = null;
     if (faceDescriptor && Array.isArray(faceDescriptor)) {
       const floatArray = new Float32Array(faceDescriptor);
-      descriptorBuffer = Buffer.from(floatArray.buffer);
+      // Create a fresh Buffer and copy the data to ensure no alignment/offset issues
+      descriptorBuffer = Buffer.alloc(floatArray.byteLength);
+      descriptorBuffer.set(new Uint8Array(floatArray.buffer));
     }
 
     await pool.execute(
