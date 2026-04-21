@@ -90,6 +90,15 @@ export default function EmployeeForm() {
     }
   }
 
+  useEffect(() => {
+    if (cameraActive && videoRef.current && streamRef.current) {
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        videoRef.current.play().catch(e => console.error("Error playing video:", e));
+      }
+    }
+  }, [cameraActive]);
+
   async function startCamera() {
     try {
       if (!modelsReady) await initModels();
@@ -97,10 +106,6 @@ export default function EmployeeForm() {
         video: { width: 480, height: 360, facingMode: "user" },
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
       setCameraActive(true);
     } catch {
       setSaveMessage("Không thể truy cập camera.");
@@ -174,6 +179,7 @@ export default function EmployeeForm() {
       if (isEdit) {
         const updated = await updateEmployee(id!, {
           ...form,
+          departmentId: departments.find((d) => d.name === form.department)?.id,
           avatar: avatarPreview || undefined,
           faceImage: faceImage || undefined,
         });
@@ -188,6 +194,7 @@ export default function EmployeeForm() {
       } else {
         const created = (await addEmployee({
           ...form,
+          departmentId: departments.find((d) => d.name === form.department)?.id,
           avatar: avatarPreview || undefined,
           faceImage: faceImage || undefined,
         })) as Employee & { defaultUsername?: string };

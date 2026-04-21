@@ -203,7 +203,7 @@ router.put('/:id', authenticate, adminOnly, async (req, res) => {
         avatar = COALESCE(?, avatar),
         is_active = COALESCE(?, is_active)
        WHERE id = ?`,
-      [name, employeeCode, departmentId, position, roleLevel, email, phone, avatar, isActive, req.params.id]
+      [name, employeeCode, departmentId, position, roleLevel, email, phone, avatar, isActive, req.params.id].map(v => v === undefined ? null : v)
     );
 
     const [rows] = await pool.execute('SELECT * FROM employees WHERE id = ?', [req.params.id]);

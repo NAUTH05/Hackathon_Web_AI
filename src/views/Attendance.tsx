@@ -203,6 +203,15 @@ export default function Attendance() {
     loadFace();
   }, [selectedEmployee]);
 
+  useEffect(() => {
+    if (cameraActive && videoRef.current && stream) {
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(e => console.error("Error playing attendance video:", e));
+      }
+    }
+  }, [cameraActive, stream]);
+
   function startCamera() {
     setFaceMessage("");
     setFaceMatched(false);
@@ -211,9 +220,6 @@ export default function Attendance() {
       .getUserMedia({ video: { facingMode: "user" } })
       .then((s) => {
         setStream(s);
-        if (videoRef.current) {
-          videoRef.current.srcObject = s;
-        }
         setCameraActive(true);
       })
       .catch((err) => {

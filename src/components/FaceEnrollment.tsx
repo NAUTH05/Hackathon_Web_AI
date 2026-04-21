@@ -46,18 +46,25 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (cameraActive && videoRef.current && stream) {
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(e => console.error("Error playing video:", e));
+      }
+    }
+  }, [cameraActive, stream]);
+
   function startCamera() {
     setResult({ status: "idle", message: "" });
     navigator.mediaDevices
       .getUserMedia({ video: { facingMode: "user" } })
       .then((s) => {
         setStream(s);
-        if (videoRef.current) {
-          videoRef.current.srcObject = s;
-        }
         setCameraActive(true);
       })
       .catch((err) => {
+        console.error("Camera access error:", err);
         setResult({
           status: "error",
           message:
@@ -163,7 +170,7 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
                 
                 {cameraActive && !detecting && (
                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                     <div className="w-48 h-64 border-2 border-dashed border-white/60 rounded-[100px] shadow-[0_0_0_9999px_rgba(0,0,0,0.6)] transition-all"></div>
+                     <div className="w-48 h-64 border-2 border-dashed border-white/60 rounded-[100px] shadow-[0_0_0_2000px_rgba(0,0,0,0.6)] transition-all"></div>
                    </div>
                 )}
                 
