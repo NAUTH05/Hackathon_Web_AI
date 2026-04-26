@@ -60,12 +60,7 @@ type Tab =
   | "attendance"
   | "presets"
   | "assign"
-  | "coefficients"
-  | "rules"
-  | "deductions"
-  | "benefits"
-  | "permissions"
-  | "export";
+  | "permissions";
 
 type PayrollRule = {
   id: string;
@@ -361,14 +356,14 @@ export default function SalaryManagement() {
     color: string;
     desc: string;
   }[] = [
-    ...BUILTIN_BLOCKS,
-    ...customVars.map((v) => ({
-      id: v.id,
-      label: v.label,
-      color: "indigo" as const,
-      desc: `${v.desc || "Biến tùy chỉnh"} = ${v.value.toLocaleString("vi-VN")}`,
-    })),
-  ];
+      ...BUILTIN_BLOCKS,
+      ...customVars.map((v) => ({
+        id: v.id,
+        label: v.label,
+        color: "indigo" as const,
+        desc: `${v.desc || "Biến tùy chỉnh"} = ${v.value.toLocaleString("vi-VN")}`,
+      })),
+    ];
 
   type BlockId = string;
   const blockColorMap: Record<string, string> = {
@@ -635,17 +630,14 @@ export default function SalaryManagement() {
     },
     { key: "present_days", label: "Ngày công", visible: true, order: 7 },
     { key: "ot", label: "OT", visible: true, order: 8 },
-    { key: "allowances", label: "Phụ cấp", visible: true, order: 9 },
-    { key: "deductions", label: "Khấu trừ", visible: true, order: 10 },
-    { key: "late_penalty", label: "Phạt trễ", visible: true, order: 11 },
-    { key: "rule_details", label: "Ràng buộc", visible: false, order: 12 },
+    { key: "rule_details", label: "Ràng buộc", visible: false, order: 9 },
     {
       key: "gross_salary",
       label: "Lương trước thuế",
       visible: true,
-      order: 13,
+      order: 10,
     },
-    { key: "net_salary", label: "Lương ròng", visible: true, order: 14 },
+    { key: "net_salary", label: "Lương ròng", visible: true, order: 11 },
   ];
 
   // OT adjustment popup
@@ -656,6 +648,172 @@ export default function SalaryManagement() {
     note: "",
   });
   const [savingOt, setSavingOt] = useState(false);
+
+  // =================== Context Menu State ===================
+  const NON_EDITABLE_COLS = ["employee_name", "department", "total_working_hours"];
+  const FORMULA_COLS = ["gross_salary", "net_salary"];
+  const [ctxMenu, setCtxMenu] = useState<{
+    visible: boolean;
+    x: number;
+    y: number;
+    colKey: string;
+    colLabel: string;
+    colIndex: number;
+  }>({ visible: false, x: 0, y: 0, colKey: "", colLabel: "", colIndex: -1 });
+  const [renameModal, setRenameModal] = useState<{
+    visible: boolean;
+    colKey: string;
+    newLabel: string;
+  }>({ visible: false, colKey: "", newLabel: "" });
+
+  // "Set tính lương" modal state
+  const [salaryCalcModal, setSalaryCalcModal] = useState<{
+    visible: boolean;
+    colKey: string;
+    colLabel: string;
+    targetType: "individual" | "preset" | "all";
+    targetId: string;
+    formula: string;
+  }>({
+    visible: false,
+    colKey: "",
+    colLabel: "",
+    targetType: "all",
+    targetId: "",
+    formula: "",
+  });
+  const [savingFormula, setSavingFormula] = useState(false);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    const handler = () => setCtxMenu((prev) => ({ ...prev, visible: false }));
+    if (ctxMenu.visible) {
+      document.addEventListener("click", handler);
+      return () => document.removeEventListener("click", handler);
+    }
+  }, [ctxMenu.visible]);
+
+  function handleHeaderContextMenu(
+    e: React.MouseEvent,
+    colKey: string,
+    colLabel: string,
+    colIndex: number,
+  ) {
+    e.preventDefault();
+    setCtxMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      colKey,
+      colLabel,
+      colIndex,
+    });
+  }
+
+  function addColumnAt(position: "left" | "right") {
+    const colName = prompt("Nhập tên cột mới:");
+    if (!colName || !colName.trim()) return;
+    const key = `custom_${Date.now()}`;
+    const idx = ctxMenu.colIndex;
+    const insertIdx = position === "left" ? idx : idx + 1;
+    const updated = [...tableColumns];
+    // Shift orders to make room
+    updated.forEach((c, i) => {
+      if (i >= insertIdx) c.order = c.order + 1;
+    });
+    updated.splice(insertIdx, 0, {
+      key,
+      label: colName.trim(),
+      visible: true,
+      order: insertIdx + 1,
+    });
+    // Re-normalize orders
+    updated.forEach((c, i) => (c.order = i + 1));
+    saveTableConfig(updated);
+    setCtxMenu((prev) => ({ ...prev, visible: false }));
+  }
+
+  function deleteColumn() {
+    if (NON_EDITABLE_COLS.includes(ctxMenu.colKey)) {
+      showToast("error", "Không thể xoá cột này");
+      return;
+    }
+    if (!confirm(`Bạn có chắc muốn xoá cột "${ctxMenu.colLabel}"?`)) return;
+    const updated = tableColumns.filter((c) => c.key !== ctxMenu.colKey);
+    updated.forEach((c, i) => (c.order = i + 1));
+    saveTableConfig(updated);
+    setCtxMenu((prev) => ({ ...prev, visible: false }));
+  }
+
+  function openRenameModal() {
+    if (NON_EDITABLE_COLS.includes(ctxMenu.colKey)) {
+      showToast("error", "Không thể đổi tên cột này");
+      return;
+    }
+    setRenameModal({
+      visible: true,
+      colKey: ctxMenu.colKey,
+      newLabel: ctxMenu.colLabel,
+    });
+    setCtxMenu((prev) => ({ ...prev, visible: false }));
+  }
+
+  function confirmRename() {
+    if (!renameModal.newLabel.trim()) return;
+    const updated = tableColumns.map((c) =>
+      c.key === renameModal.colKey
+        ? { ...c, label: renameModal.newLabel.trim() }
+        : c,
+    );
+    saveTableConfig(updated);
+    setRenameModal({ visible: false, colKey: "", newLabel: "" });
+  }
+
+  function openSalaryCalcModal() {
+    setSalaryCalcModal({
+      visible: true,
+      colKey: ctxMenu.colKey,
+      colLabel: ctxMenu.colLabel,
+      targetType: "all",
+      targetId: "",
+      formula: "",
+    });
+    setCtxMenu((prev) => ({ ...prev, visible: false }));
+  }
+
+  async function saveSalaryFormula() {
+    if (!salaryCalcModal.formula.trim()) {
+      showToast("error", "Vui lòng nhập công thức");
+      return;
+    }
+    setSavingFormula(true);
+    try {
+      const res = await fetch(buildApiUrl("/salary/formula-config"), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("auth_token")}`,
+        },
+        body: JSON.stringify({
+          column: salaryCalcModal.colKey,
+          targetType: salaryCalcModal.targetType,
+          targetId: salaryCalcModal.targetId || null,
+          formula: salaryCalcModal.formula,
+        }),
+      });
+      if (res.ok) {
+        showToast("success", "Đã lưu công thức tính lương");
+        setSalaryCalcModal((prev) => ({ ...prev, visible: false }));
+      } else {
+        showToast("error", "Lỗi khi lưu công thức");
+      }
+    } catch {
+      showToast("error", "Lỗi kết nối server");
+    } finally {
+      setSavingFormula(false);
+    }
+  }
+
 
   async function loadFormulaVars() {
     try {
@@ -673,7 +831,7 @@ export default function SalaryManagement() {
           })),
         );
       }
-    } catch {}
+    } catch { }
   }
 
   useEffect(() => {
@@ -689,7 +847,7 @@ export default function SalaryManagement() {
             .sort(),
         );
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   async function reloadPresets() {
@@ -709,7 +867,7 @@ export default function SalaryManagement() {
           return;
         }
       }
-    } catch {}
+    } catch { }
     setTableColumns(DEFAULT_COLUMNS);
   }
 
@@ -724,7 +882,7 @@ export default function SalaryManagement() {
         },
         body: JSON.stringify({ columns: cols }),
       });
-    } catch {}
+    } catch { }
   }
 
   function isColVisible(key: string) {
@@ -777,7 +935,7 @@ export default function SalaryManagement() {
       );
       setSalaryTotalGross(
         res.summary?.totalGross ??
-          res.data.reduce((s, r) => s + r.grossSalary, 0),
+        res.data.reduce((s, r) => s + r.grossSalary, 0),
       );
       if (res.departments) setAvailableDepts(res.departments);
     } catch (err) {
@@ -1137,21 +1295,21 @@ export default function SalaryManagement() {
   });
 
   const DEDUCTION_TYPE_META: Record<string, { label: string; color: string }> =
-    {
-      tax: { label: "Thuế", color: "text-red-600 bg-red-50 border-red-200" },
-      insurance: {
-        label: "Bảo hiểm",
-        color: "text-blue-600 bg-blue-50 border-blue-200",
-      },
-      union_fee: {
-        label: "Công đoàn",
-        color: "text-purple-600 bg-purple-50 border-purple-200",
-      },
-      custom: {
-        label: "Tùy chỉnh",
-        color: "text-gray-600 bg-gray-50 border-gray-200",
-      },
-    };
+  {
+    tax: { label: "Thuế", color: "text-red-600 bg-red-50 border-red-200" },
+    insurance: {
+      label: "Bảo hiểm",
+      color: "text-blue-600 bg-blue-50 border-blue-200",
+    },
+    union_fee: {
+      label: "Công đoàn",
+      color: "text-purple-600 bg-purple-50 border-purple-200",
+    },
+    custom: {
+      label: "Tùy chỉnh",
+      color: "text-gray-600 bg-gray-50 border-gray-200",
+    },
+  };
 
   async function loadDeductionItems() {
     try {
@@ -1169,8 +1327,8 @@ export default function SalaryManagement() {
     try {
       const url = editingDeduction
         ? buildApiUrl(
-            `/salary/deduction-items/${encodeURIComponent(editingDeduction.id)}`,
-          )
+          `/salary/deduction-items/${encodeURIComponent(editingDeduction.id)}`,
+        )
         : buildApiUrl("/salary/deduction-items");
       const method = editingDeduction ? "PUT" : "POST";
       const res = await fetch(url, {
@@ -1621,7 +1779,7 @@ export default function SalaryManagement() {
     if (presetForm.includeAllowances)
       lines.push(
         "+ Phụ cấp" +
-          (presetForm.allowances > 0 ? ` (${fmt(presetForm.allowances)})` : ""),
+        (presetForm.allowances > 0 ? ` (${fmt(presetForm.allowances)})` : ""),
       );
     if (presetForm.includeLatePenalty)
       lines.push(
@@ -1638,66 +1796,36 @@ export default function SalaryManagement() {
     adminOnly?: boolean;
     requireElevated?: boolean; // admin OR salary_manager
   }[] = [
-    {
-      key: "salary",
-      label: "Bảng lương",
-      icon: <DollarSign className="w-4 h-4" />,
-    },
-    {
-      key: "attendance",
-      label: "Điểm chuyên cần",
-      icon: <Star className="w-4 h-4" />,
-      requireElevated: true,
-    },
-    {
-      key: "presets",
-      label: "Tính Lương",
-      icon: <Settings className="w-4 h-4" />,
-      requireElevated: true,
-    },
-    {
-      key: "assign",
-      label: "Gán Lương",
-      icon: <UserCheck className="w-4 h-4" />,
-      requireElevated: true,
-    },
-    {
-      key: "coefficients",
-      label: "Hệ số",
-      icon: <Settings className="w-4 h-4" />,
-      requireElevated: true,
-    },
-    {
-      key: "rules",
-      label: "Ràng buộc",
-      icon: <Shield className="w-4 h-4" />,
-      requireElevated: true,
-    },
-    {
-      key: "deductions",
-      label: "Khấu trừ",
-      icon: <Calculator className="w-4 h-4" />,
-      requireElevated: true,
-    },
-    {
-      key: "benefits",
-      label: "Phụ cấp/BH",
-      icon: <DollarSign className="w-4 h-4" />,
-      requireElevated: true,
-    },
-    {
-      key: "permissions",
-      label: "Quyền",
-      icon: <Lock className="w-4 h-4" />,
-      adminOnly: true,
-    },
-    {
-      key: "export",
-      label: "Xuất Excel",
-      icon: <FileSpreadsheet className="w-4 h-4" />,
-      requireElevated: true,
-    },
-  ];
+      {
+        key: "salary",
+        label: "Bảng lương",
+        icon: <DollarSign className="w-4 h-4" />,
+      },
+      {
+        key: "attendance",
+        label: "Điểm chuyên cần",
+        icon: <Star className="w-4 h-4" />,
+        requireElevated: true,
+      },
+      {
+        key: "presets",
+        label: "Loại lương",
+        icon: <Settings className="w-4 h-4" />,
+        requireElevated: true,
+      },
+      {
+        key: "assign",
+        label: "Gán Lương",
+        icon: <UserCheck className="w-4 h-4" />,
+        requireElevated: true,
+      },
+      {
+        key: "permissions",
+        label: "Quyền",
+        icon: <Lock className="w-4 h-4" />,
+        adminOnly: true,
+      },
+    ];
 
   const visibleTabs = tabs.filter((t) => {
     if (t.requireElevated) return isAdmin || isSalaryManager;
@@ -1727,11 +1855,10 @@ export default function SalaryManagement() {
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === t.key
-                ? "bg-white text-emerald-700 shadow-sm"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab === t.key
+              ? "bg-white text-emerald-700 shadow-sm"
+              : "text-gray-500 hover:text-gray-700"
+              }`}
           >
             {t.icon}
             {t.label}
@@ -1798,11 +1925,10 @@ export default function SalaryManagement() {
               <button
                 onClick={handleLockToggle}
                 disabled={locking}
-                className={`mt-5 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${
-                  salaryLocked
-                    ? "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
-                    : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
-                }`}
+                className={`mt-5 flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 ${salaryLocked
+                  ? "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"
+                  : "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                  }`}
               >
                 {salaryLocked ? (
                   <Unlock className="w-4 h-4" />
@@ -2022,107 +2148,94 @@ export default function SalaryManagement() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200">
-                      {isColVisible("employee_name") && (
-                        <th
-                          className="text-left px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                          onClick={() => toggleSort("employee_name")}
-                        >
-                          Nhân viên {sortIcon("employee_name")}
-                        </th>
-                      )}
-                      {isColVisible("department") && (
-                        <th
-                          className="text-left px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                          onClick={() => toggleSort("department")}
-                        >
-                          Phòng ban {sortIcon("department")}
-                        </th>
-                      )}
-                      {isColVisible("preset") && (
-                        <th className="text-left px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                          Preset
-                        </th>
-                      )}
-                      {isColVisible("base_salary") && (
-                        <th
-                          className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                          onClick={() => toggleSort("base_salary")}
-                        >
-                          Lương CB {sortIcon("base_salary")}
-                        </th>
-                      )}
-                      {isColVisible("total_working_hours") && (
-                        <th className="text-center px-3 py-3 font-semibold text-blue-600 whitespace-nowrap">
-                          <span className="flex items-center justify-center gap-1">
-                            <Clock className="w-3.5 h-3.5" />
-                            Tổng giờ làm
-                          </span>
-                        </th>
-                      )}
-                      {isColVisible("effective_hours") && (
-                        <th className="text-center px-3 py-3 font-semibold text-cyan-600 whitespace-nowrap">
-                          Giờ hiệu dụng
-                        </th>
-                      )}
-                      {isColVisible("present_days") && (
-                        <th
-                          className="text-center px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                          onClick={() => toggleSort("present_days")}
-                        >
-                          Ngày công {sortIcon("present_days")}
-                        </th>
-                      )}
-                      {isColVisible("ot") && (
-                        <th
-                          className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                          onClick={() => toggleSort("ot_hours")}
-                        >
-                          OT {sortIcon("ot_hours")}
-                          {(isAdmin || isSalaryManager) && (
-                            <span className="block text-[10px] text-blue-400 font-normal">
-                              Click điều chỉnh
-                            </span>
-                          )}
-                        </th>
-                      )}
-                      {isColVisible("allowances") && (
-                        <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                          Phụ cấp
-                        </th>
-                      )}
-                      {isColVisible("deductions") && (
-                        <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                          Khấu trừ
-                        </th>
-                      )}
-                      {isColVisible("late_penalty") && (
-                        <th className="text-right px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">
-                          Phạt trễ
-                        </th>
-                      )}
-                      {isColVisible("rule_details") && (
-                        <th className="text-left px-3 py-3 font-semibold text-indigo-600 whitespace-nowrap">
-                          Ràng buộc
-                        </th>
-                      )}
-                      {isColVisible("gross_salary") && (
-                        <th
-                          className="text-right px-3 py-3 font-semibold text-gray-600 cursor-pointer hover:text-emerald-700 select-none whitespace-nowrap"
-                          onClick={() => toggleSort("gross_salary")}
-                        >
-                          Lương trước thuế {sortIcon("gross_salary")}
-                        </th>
-                      )}
-                      {isColVisible("net_salary") && (
-                        <th
-                          className="text-right px-3 py-3 font-semibold text-emerald-700 cursor-pointer hover:text-emerald-900 select-none whitespace-nowrap"
-                          onClick={() => toggleSort("net_salary")}
-                        >
-                          Lương ròng {sortIcon("net_salary")}
-                        </th>
-                      )}
+                      {tableColumns
+                        .filter((col) => col.visible)
+                        .map((col, idx) => {
+                          const sortable = [
+                            "employee_name",
+                            "department",
+                            "base_salary",
+                            "present_days",
+                            "ot_hours",
+                            "gross_salary",
+                            "net_salary",
+                          ];
+                          const sortKey =
+                            col.key === "ot" ? "ot_hours" : col.key;
+                          const isSortable = sortable.includes(sortKey);
+                          const isTimeCol =
+                            col.key === "total_working_hours";
+                          const isEffective =
+                            col.key === "effective_hours";
+                          const isNetCol = col.key === "net_salary";
+                          const isRuleCol = col.key === "rule_details";
+                          const isOtCol = col.key === "ot";
+
+                          let textColor = "text-gray-600";
+                          if (isTimeCol) textColor = "text-blue-600";
+                          if (isEffective) textColor = "text-cyan-600";
+                          if (isNetCol) textColor = "text-emerald-700";
+                          if (isRuleCol) textColor = "text-indigo-600";
+
+                          const align = [
+                            "base_salary",
+                            "allowances",
+                            "deductions",
+                            "late_penalty",
+                            "gross_salary",
+                            "net_salary",
+                            "ot",
+                          ].includes(col.key)
+                            ? "text-right"
+                            : [
+                              "total_working_hours",
+                              "effective_hours",
+                              "present_days",
+                            ].includes(col.key)
+                              ? "text-center"
+                              : "text-left";
+
+                          return (
+                            <th
+                              key={col.key}
+                              className={`${align} px-3 py-3 font-semibold ${textColor} ${isSortable ? "cursor-pointer hover:text-emerald-700" : ""} select-none whitespace-nowrap`}
+                              onClick={
+                                isSortable
+                                  ? () => toggleSort(sortKey)
+                                  : undefined
+                              }
+                              onContextMenu={(e) =>
+                                handleHeaderContextMenu(
+                                  e,
+                                  col.key,
+                                  col.label,
+                                  idx,
+                                )
+                              }
+                            >
+                              {isTimeCol ? (
+                                <span className="flex items-center justify-center gap-1">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  {col.label}
+                                </span>
+                              ) : (
+                                <>
+                                  {col.label}{" "}
+                                  {isSortable && sortIcon(sortKey)}
+                                </>
+                              )}
+                              {isOtCol &&
+                                (isAdmin || isSalaryManager) && (
+                                  <span className="block text-[10px] text-blue-400 font-normal">
+                                    Click điều chỉnh
+                                  </span>
+                                )}
+                            </th>
+                          );
+                        })}
                     </tr>
                   </thead>
+
                   <tbody className="divide-y divide-gray-100">
                     {displayRecords.map((r) => (
                       <tr
@@ -2521,11 +2634,10 @@ export default function SalaryManagement() {
               return (
                 <div
                   key={p.id}
-                  className={`bg-white rounded-2xl border p-5 transition-shadow hover:shadow-md ${
-                    p.isDefault
-                      ? "border-emerald-300 ring-1 ring-emerald-100"
-                      : "border-gray-200"
-                  }`}
+                  className={`bg-white rounded-2xl border p-5 transition-shadow hover:shadow-md ${p.isDefault
+                    ? "border-emerald-300 ring-1 ring-emerald-100"
+                    : "border-gray-200"
+                    }`}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div>
@@ -3063,7 +3175,7 @@ export default function SalaryManagement() {
                                       !isParen &&
                                       node.blockId !== ")" &&
                                       formulaNodes[idx - 1]?.blockId !==
-                                        "(" && (
+                                      "(" && (
                                         <select
                                           value={node.operator}
                                           onChange={(e) => {
@@ -3736,11 +3848,10 @@ export default function SalaryManagement() {
                         </td>
                         <td className="px-4 py-3">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                              currentPreset
-                                ? "bg-emerald-100 text-emerald-700"
-                                : "bg-gray-100 text-gray-500"
-                            }`}
+                            className={`px-2 py-0.5 rounded-full text-xs font-medium ${currentPreset
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-gray-100 text-gray-500"
+                              }`}
                           >
                             {currentPreset?.name ||
                               defaultPreset?.name ||
@@ -3779,1266 +3890,6 @@ export default function SalaryManagement() {
         </div>
       )}
 
-      {/* =================== Coefficients Tab =================== */}
-      {tab === "coefficients" && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl border border-gray-200 p-6">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-lg font-bold text-gray-900">Hệ số lương</h3>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setShowAddCoeff((v) => !v);
-                    setAddCoeffForm({
-                      type: "",
-                      multiplier: "1",
-                      description: "",
-                    });
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Thêm hệ số
-                </button>
-                <button
-                  onClick={loadCoefficients}
-                  className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
-                >
-                  <Settings className="w-3.5 h-3.5" /> Làm mới
-                </button>
-              </div>
-            </div>
-            <p className="text-sm text-gray-500 mb-5">
-              Chỉnh hệ số nhân lương cho từng loại — nhấn <strong>Lưu</strong>{" "}
-              để áp dụng.
-            </p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600 w-40">
-                      Loại
-                    </th>
-                    <th className="text-center px-4 py-3 font-semibold text-gray-600 w-36">
-                      Hệ số (×)
-                    </th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">
-                      Mô tả
-                    </th>
-                    <th className="text-center px-4 py-3 font-semibold text-gray-600 w-32">
-                      Thao tác
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {/* Add new row */}
-                  {showAddCoeff && (
-                    <tr className="bg-emerald-50 border-b-2 border-emerald-200">
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={addCoeffForm.type}
-                          onChange={(e) =>
-                            setAddCoeffForm((f) => ({
-                              ...f,
-                              type: e.target.value,
-                            }))
-                          }
-                          placeholder="vd: bonus_tet"
-                          className="w-full border border-emerald-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                        />
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          Tên loại (không dấu)
-                        </p>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <input
-                          type="number"
-                          step="0.1"
-                          min="0.1"
-                          value={addCoeffForm.multiplier}
-                          onChange={(e) =>
-                            setAddCoeffForm((f) => ({
-                              ...f,
-                              multiplier: e.target.value,
-                            }))
-                          }
-                          className="w-20 text-center border border-emerald-300 rounded-lg px-2 py-1.5 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={addCoeffForm.description}
-                          onChange={(e) =>
-                            setAddCoeffForm((f) => ({
-                              ...f,
-                              description: e.target.value,
-                            }))
-                          }
-                          placeholder="Mô tả..."
-                          className="w-full border border-emerald-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            onClick={handleAddCoefficient}
-                            disabled={savingNewCoeff}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                          >
-                            {savingNewCoeff ? "..." : "Thêm"}
-                          </button>
-                          <button
-                            onClick={() => setShowAddCoeff(false)}
-                            className="px-2 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  {coefficients.length === 0 && !showAddCoeff ? (
-                    <tr>
-                      <td
-                        colSpan={4}
-                        className="text-center py-8 text-gray-400"
-                      >
-                        Chưa có hệ số nào. Nhấn <strong>Thêm hệ số</strong> để
-                        tạo mới.
-                      </td>
-                    </tr>
-                  ) : (
-                    coefficients.map((coeff) => {
-                      const typeLabels: Record<string, string> = {
-                        overtime: "Tăng ca (OT)",
-                        night_shift: "Ca đêm",
-                        weekend: "Cuối tuần",
-                        holiday: "Ngày lễ",
-                        dedication: "Chuyên cần",
-                      };
-                      const edit = coeffEditMap[coeff.type] || {
-                        multiplier: String(coeff.multiplier),
-                        description: coeff.description || "",
-                      };
-                      const dirty =
-                        edit.multiplier !== String(coeff.multiplier) ||
-                        edit.description !== (coeff.description || "");
-                      const isDeleting = deletingCoeff === coeff.type;
-                      return (
-                        <tr key={coeff.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 font-medium text-gray-900">
-                            {typeLabels[coeff.type] || coeff.type}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <input
-                              type="number"
-                              step="0.1"
-                              min="0.1"
-                              value={edit.multiplier}
-                              onChange={(e) =>
-                                setCoeffEditMap((m) => ({
-                                  ...m,
-                                  [coeff.type]: {
-                                    ...edit,
-                                    multiplier: e.target.value,
-                                  },
-                                }))
-                              }
-                              className="w-20 text-center border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none"
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input
-                              type="text"
-                              value={edit.description}
-                              onChange={(e) =>
-                                setCoeffEditMap((m) => ({
-                                  ...m,
-                                  [coeff.type]: {
-                                    ...edit,
-                                    description: e.target.value,
-                                  },
-                                }))
-                              }
-                              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                              placeholder="Mô tả..."
-                            />
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                onClick={() =>
-                                  handleSaveCoefficient(coeff.type)
-                                }
-                                disabled={savingCoeff === coeff.type || !dirty}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${dirty ? "bg-emerald-600 text-white hover:bg-emerald-700" : "bg-gray-100 text-gray-400 cursor-not-allowed"}`}
-                              >
-                                {savingCoeff === coeff.type ? "..." : "Lưu"}
-                              </button>
-                              {isDeleting ? (
-                                <>
-                                  <button
-                                    onClick={() =>
-                                      handleDeleteCoefficient(coeff.type)
-                                    }
-                                    className="px-2 py-1.5 rounded-lg text-xs font-medium bg-red-600 text-white hover:bg-red-700"
-                                  >
-                                    Xác nhận
-                                  </button>
-                                  <button
-                                    onClick={() => setDeletingCoeff(null)}
-                                    className="px-2 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
-                                  >
-                                    Hủy
-                                  </button>
-                                </>
-                              ) : (
-                                <button
-                                  onClick={() => setDeletingCoeff(coeff.type)}
-                                  className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                                  title="Xóa hệ số này"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =================== Rules Tab =================== */}
-      {tab === "rules" && (isAdmin || isSalaryManager) && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-gray-900">
-                Ràng buộc tính lương
-              </h3>
-              <p className="text-sm text-gray-500">
-                Cấu hình chính sách đi trễ, giờ tối thiểu, phạt tái phạm. Các
-                rule sẽ tự động áp dụng khi tính lương.
-              </p>
-            </div>
-            <button
-              onClick={openAddRule}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-            >
-              <Plus className="w-4 h-4" /> Thêm Rule
-            </button>
-          </div>
-
-          {/* Rule cards */}
-          {payrollRules.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <Shield className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>Chưa có rule nào. Nhấn &quot;Thêm Rule&quot; để tạo.</p>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            {payrollRules.map((rule) => {
-              const meta = RULE_TYPE_META[rule.rule_type];
-              const cfg = rule.config || {};
-              return (
-                <div
-                  key={rule.id}
-                  className={`border rounded-xl p-4 ${rule.is_active ? "bg-white border-gray-200" : "bg-gray-50 border-gray-100 opacity-60"}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span
-                          className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${meta?.color || "text-gray-600 bg-gray-50 border-gray-200"}`}
-                        >
-                          {meta?.label || rule.rule_type}
-                        </span>
-                        <span className="text-sm font-bold text-gray-800">
-                          {rule.name}
-                        </span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded ${rule.is_active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
-                        >
-                          {rule.is_active ? "BẬT" : "TẮT"}
-                        </span>
-                      </div>
-                      {rule.description && (
-                        <p className="text-xs text-gray-500 mb-2">
-                          {rule.description}
-                        </p>
-                      )}
-
-                      {/* Config summary */}
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
-                        {rule.rule_type === "late_policy" && (
-                          <>
-                            <span>
-                              Ân hạn:{" "}
-                              <strong>
-                                {String(cfg.grace_minutes ?? 0)} phút
-                              </strong>
-                            </span>
-                            <span>
-                              Quy đổi:{" "}
-                              <strong>
-                                ×{String(cfg.conversion_rate ?? 1)}
-                              </strong>
-                            </span>
-                          </>
-                        )}
-                        {rule.rule_type === "min_hours_policy" && (
-                          <>
-                            <span>
-                              Giờ tối thiểu:{" "}
-                              <strong>
-                                {String(cfg.required_hours ?? 160)}h
-                              </strong>
-                            </span>
-                            <span>
-                              Hệ số phạt:{" "}
-                              <strong>
-                                ×{String(cfg.penalty_rate ?? 0.7)}
-                              </strong>{" "}
-                              (giảm{" "}
-                              {Math.round(
-                                (1 - Number(cfg.penalty_rate ?? 0.7)) * 100,
-                              )}
-                              %)
-                            </span>
-                          </>
-                        )}
-                        {rule.rule_type === "repeat_late_policy" && (
-                          <>
-                            <span>
-                              Ngưỡng:{" "}
-                              <strong>
-                                {String(cfg.max_late_count ?? 5)} lần
-                              </strong>
-                            </span>
-                            <span>
-                              Phạt:{" "}
-                              <strong>
-                                {cfg.penalty_type === "percentage"
-                                  ? `${(Number(cfg.penalty_percentage ?? 0) * 100).toFixed(0)}%`
-                                  : `${Number(cfg.penalty_amount ?? 0).toLocaleString("vi-VN")}đ`}
-                              </strong>
-                            </span>
-                          </>
-                        )}
-                        <span className="text-gray-400">
-                          Ưu tiên: {rule.priority}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <button
-                        onClick={() => toggleRule(rule)}
-                        className={`px-2.5 py-1 text-xs rounded-lg border ${rule.is_active ? "border-orange-200 text-orange-600 hover:bg-orange-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}
-                      >
-                        {rule.is_active ? "Tắt" : "Bật"}
-                      </button>
-                      <button
-                        onClick={() => openEditRule(rule)}
-                        className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => deleteRule(rule.id)}
-                        className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Rule form modal */}
-          {showRuleForm && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-                <div className="sticky top-0 bg-white border-b px-6 py-4 rounded-t-2xl flex items-center justify-between">
-                  <h3 className="text-lg font-bold">
-                    {editingRule ? "Sửa Rule" : "Thêm Rule mới"}
-                  </h3>
-                  <button
-                    onClick={() => setShowRuleForm(false)}
-                    className="p-1.5 hover:bg-gray-100 rounded-lg"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                <div className="p-6 space-y-4">
-                  {/* Rule type */}
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Loại rule
-                    </label>
-                    <select
-                      value={ruleForm.rule_type}
-                      onChange={(e) =>
-                        setRuleForm({
-                          ...ruleForm,
-                          rule_type: e.target.value,
-                          config: {},
-                        })
-                      }
-                      disabled={!!editingRule}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    >
-                      {Object.entries(RULE_TYPE_META).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Name */}
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Tên rule *
-                    </label>
-                    <input
-                      type="text"
-                      value={ruleForm.name}
-                      onChange={(e) =>
-                        setRuleForm({ ...ruleForm, name: e.target.value })
-                      }
-                      placeholder="VD: Chính sách đi trễ công ty"
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Description */}
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Mô tả
-                    </label>
-                    <textarea
-                      value={ruleForm.description}
-                      onChange={(e) =>
-                        setRuleForm({
-                          ...ruleForm,
-                          description: e.target.value,
-                        })
-                      }
-                      rows={2}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Priority + Active */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-medium text-gray-600 mb-1 block">
-                        Ưu tiên (nhỏ = chạy trước)
-                      </label>
-                      <input
-                        type="number"
-                        value={ruleForm.priority}
-                        onChange={(e) =>
-                          setRuleForm({
-                            ...ruleForm,
-                            priority: parseInt(e.target.value) || 0,
-                          })
-                        }
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                      />
-                    </div>
-                    <div className="flex items-end pb-1">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={ruleForm.is_active}
-                          onChange={(e) =>
-                            setRuleForm({
-                              ...ruleForm,
-                              is_active: e.target.checked,
-                            })
-                          }
-                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span className="text-sm text-gray-700">Kích hoạt</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Dynamic config fields */}
-                  <div className="border-t pt-4">
-                    <h4 className="text-sm font-semibold text-gray-700 mb-3">
-                      Cấu hình
-                    </h4>
-                    <div className="space-y-3">
-                      {(RULE_TYPE_META[ruleForm.rule_type]?.fields || []).map(
-                        (field) => (
-                          <div key={field.key}>
-                            <label className="text-xs font-medium text-gray-600 mb-1 block">
-                              {field.label}
-                            </label>
-                            {field.type === "select" &&
-                            field.key === "penalty_type" ? (
-                              <select
-                                value={String(
-                                  ruleForm.config[field.key] || "fixed",
-                                )}
-                                onChange={(e) =>
-                                  setRuleForm({
-                                    ...ruleForm,
-                                    config: {
-                                      ...ruleForm.config,
-                                      [field.key]: e.target.value,
-                                    },
-                                  })
-                                }
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                              >
-                                <option value="fixed">Cố định (VNĐ)</option>
-                                <option value="percentage">
-                                  Phần trăm (%)
-                                </option>
-                              </select>
-                            ) : (
-                              <input
-                                type={field.type}
-                                step={field.step}
-                                value={String(ruleForm.config[field.key] ?? "")}
-                                onChange={(e) => {
-                                  const val =
-                                    field.type === "number"
-                                      ? e.target.value === ""
-                                        ? ""
-                                        : parseFloat(e.target.value)
-                                      : e.target.value;
-                                  setRuleForm({
-                                    ...ruleForm,
-                                    config: {
-                                      ...ruleForm.config,
-                                      [field.key]: val,
-                                    },
-                                  });
-                                }}
-                                placeholder={field.placeholder}
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                              />
-                            )}
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Explanation */}
-                  <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600">
-                    {ruleForm.rule_type === "late_policy" && (
-                      <div>
-                        <strong>Cách hoạt động:</strong> Mỗi ngày đi trễ, trừ đi
-                        ân hạn ({String(ruleForm.config.grace_minutes || 0)}{" "}
-                        phút), phần còn lại quy đổi thành giờ bị trừ (×
-                        {String(ruleForm.config.conversion_rate || 1)}).
-                        <br />
-                        <br />
-                        <strong>VD:</strong> Trễ 35 phút, ân hạn 5 phút →
-                        (35-5)/60 ×{" "}
-                        {String(ruleForm.config.conversion_rate || 1)} ={" "}
-                        {(
-                          (Math.max(
-                            0,
-                            35 - Number(ruleForm.config.grace_minutes || 0),
-                          ) /
-                            60) *
-                          Number(ruleForm.config.conversion_rate || 1)
-                        ).toFixed(2)}
-                        h bị trừ
-                      </div>
-                    )}
-                    {ruleForm.rule_type === "min_hours_policy" && (
-                      <div>
-                        <strong>Cách hoạt động:</strong> Nếu giờ làm hiệu dụng
-                        &lt; {String(ruleForm.config.required_hours || 160)}h,
-                        lương sẽ nhân hệ số{" "}
-                        {String(ruleForm.config.penalty_rate || 0.7)} (giảm{" "}
-                        {Math.round(
-                          (1 - Number(ruleForm.config.penalty_rate || 0.7)) *
-                            100,
-                        )}
-                        %).
-                        <br />
-                        <br />
-                        <strong>VD:</strong> Lương gross 10M, chỉ làm 120h/
-                        {String(ruleForm.config.required_hours || 160)}h → lương
-                        = 10M × {String(ruleForm.config.penalty_rate || 0.7)} ={" "}
-                        {(
-                          10000000 * Number(ruleForm.config.penalty_rate || 0.7)
-                        ).toLocaleString("vi-VN")}
-                        đ
-                      </div>
-                    )}
-                    {ruleForm.rule_type === "repeat_late_policy" && (
-                      <div>
-                        <strong>Cách hoạt động:</strong> Nếu đi trễ &gt;{" "}
-                        {String(ruleForm.config.max_late_count || 5)} lần/tháng,
-                        phạt thêm{" "}
-                        {ruleForm.config.penalty_type === "percentage"
-                          ? `${(Number(ruleForm.config.penalty_percentage || 0) * 100).toFixed(0)}% lương`
-                          : `${Number(ruleForm.config.penalty_amount || 0).toLocaleString("vi-VN")}đ`}
-                        .
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={saveRule}
-                      className="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium"
-                    >
-                      <Save className="w-4 h-4 inline mr-1" />{" "}
-                      {editingRule ? "Cập nhật" : "Tạo Rule"}
-                    </button>
-                    <button
-                      onClick={() => setShowRuleForm(false)}
-                      className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                    >
-                      Hủy
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Info box */}
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
-            <strong>💡 Luồng tính lương khi có rule:</strong>
-            <ol className="mt-2 space-y-1 list-decimal list-inside">
-              <li>Lấy giờ làm thực tế (working_hours)</li>
-              <li>
-                <strong>Áp dụng late_policy</strong> → ra giờ hiệu dụng
-                (effective_hours = working_hours - late_deduction)
-              </li>
-              <li>
-                Tính lương cơ bản từ effective_hours (thay vì working_hours)
-              </li>
-              <li>
-                <strong>Áp dụng min_hours_policy</strong> → giảm lương nếu dưới
-                ngưỡng
-              </li>
-              <li>
-                <strong>Áp dụng repeat_late_policy</strong> → phạt thêm nếu trễ
-                nhiều lần
-              </li>
-              <li>Trừ khấu trừ, phạt vi phạm → ra net salary</li>
-            </ol>
-          </div>
-        </div>
-      )}
-
-      {/* =================== Deductions Tab =================== */}
-      {tab === "deductions" && (isAdmin || isSalaryManager) && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-gray-900">
-                Khoản khấu trừ
-              </h3>
-              <p className="text-sm text-gray-500">
-                Cấu hình thuế, BHXH, BHYT, phí công đoàn và các khoản trừ tự
-                động áp dụng khi tính lương. Các khoản này{" "}
-                <strong>không ảnh hưởng lương trước thuế (gross)</strong>.
-              </p>
-            </div>
-            <button
-              onClick={openAddDeduction}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
-            >
-              <Plus className="w-4 h-4" /> Thêm khoản trừ
-            </button>
-          </div>
-
-          {/* Deduction cards */}
-          {deductionItems.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <Calculator className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p>
-                Chưa có khoản khấu trừ nào. Nhấn &quot;Thêm khoản trừ&quot; để
-                tạo.
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            {deductionItems.map((item) => {
-              const meta =
-                DEDUCTION_TYPE_META[item.type] || DEDUCTION_TYPE_META.custom;
-              return (
-                <div
-                  key={item.id}
-                  className={`border rounded-xl p-4 ${item.isActive ? "bg-white border-gray-200" : "bg-gray-50 border-gray-100 opacity-60"}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span
-                          className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${meta.color}`}
-                        >
-                          {meta.label}
-                        </span>
-                        <span className="text-sm font-bold text-gray-800">
-                          {item.name}
-                        </span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded ${item.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
-                        >
-                          {item.isActive ? "BẬT" : "TẮT"}
-                        </span>
-                      </div>
-                      {item.description && (
-                        <p className="text-xs text-gray-500 mb-2">
-                          {item.description}
-                        </p>
-                      )}
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
-                        <span>
-                          Cách tính:{" "}
-                          <strong>
-                            {item.calcType === "percentage"
-                              ? "Phần trăm"
-                              : "Cố định"}
-                          </strong>
-                        </span>
-                        {item.calcType === "percentage" ? (
-                          <span>
-                            Tỷ lệ:{" "}
-                            <strong>{(item.rate * 100).toFixed(1)}%</strong>{" "}
-                            lương gross
-                          </span>
-                        ) : (
-                          <span>
-                            Số tiền:{" "}
-                            <strong>
-                              {item.amount.toLocaleString("vi-VN")}đ
-                            </strong>
-                          </span>
-                        )}
-                        <span className="text-gray-400">
-                          Ưu tiên: {item.priority}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      <button
-                        onClick={() => toggleDeductionItem(item)}
-                        className={`px-2.5 py-1 text-xs rounded-lg border ${item.isActive ? "border-orange-200 text-orange-600 hover:bg-orange-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}
-                      >
-                        {item.isActive ? "Tắt" : "Bật"}
-                      </button>
-                      <button
-                        onClick={() => openEditDeduction(item)}
-                        className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => deleteDeductionItem(item.id)}
-                        className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Deduction form modal */}
-          {showDeductionForm && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-                <div className="sticky top-0 bg-white border-b px-6 py-4 rounded-t-2xl flex items-center justify-between">
-                  <h3 className="text-lg font-bold">
-                    {editingDeduction ? "Sửa khoản trừ" : "Thêm khoản trừ mới"}
-                  </h3>
-                  <button
-                    onClick={() => setShowDeductionForm(false)}
-                    className="p-1.5 hover:bg-gray-100 rounded-lg"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                <div className="p-6 space-y-4">
-                  {/* Name */}
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Tên khoản trừ *
-                    </label>
-                    <input
-                      type="text"
-                      value={deductionForm.name}
-                      onChange={(e) =>
-                        setDeductionForm({
-                          ...deductionForm,
-                          name: e.target.value,
-                        })
-                      }
-                      placeholder="VD: BHXH (8%)"
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Type */}
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Loại
-                    </label>
-                    <select
-                      value={deductionForm.type}
-                      onChange={(e) =>
-                        setDeductionForm({
-                          ...deductionForm,
-                          type: e.target.value,
-                        })
-                      }
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    >
-                      {Object.entries(DEDUCTION_TYPE_META).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Calc type */}
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Cách tính
-                    </label>
-                    <select
-                      value={deductionForm.calc_type}
-                      onChange={(e) =>
-                        setDeductionForm({
-                          ...deductionForm,
-                          calc_type: e.target.value,
-                        })
-                      }
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    >
-                      <option value="percentage">
-                        Phần trăm lương gross (%)
-                      </option>
-                      <option value="fixed">Cố định (VNĐ)</option>
-                    </select>
-                  </div>
-
-                  {/* Amount or Rate */}
-                  {deductionForm.calc_type === "percentage" ? (
-                    <div>
-                      <label className="text-xs font-medium text-gray-600 mb-1 block">
-                        Tỷ lệ (VD: 0.08 = 8%)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={deductionForm.rate}
-                        onChange={(e) =>
-                          setDeductionForm({
-                            ...deductionForm,
-                            rate: parseFloat(e.target.value) || 0,
-                          })
-                        }
-                        placeholder="0.08"
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                      />
-                      <p className="text-xs text-gray-400 mt-1">
-                        = {(deductionForm.rate * 100).toFixed(1)}% lương gross
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="text-xs font-medium text-gray-600 mb-1 block">
-                        Số tiền (VNĐ)
-                      </label>
-                      <input
-                        type="number"
-                        step="10000"
-                        value={deductionForm.amount}
-                        onChange={(e) =>
-                          setDeductionForm({
-                            ...deductionForm,
-                            amount: parseFloat(e.target.value) || 0,
-                          })
-                        }
-                        placeholder="500000"
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                      />
-                    </div>
-                  )}
-
-                  {/* Description */}
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">
-                      Mô tả
-                    </label>
-                    <textarea
-                      value={deductionForm.description}
-                      onChange={(e) =>
-                        setDeductionForm({
-                          ...deductionForm,
-                          description: e.target.value,
-                        })
-                      }
-                      rows={2}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                    />
-                  </div>
-
-                  {/* Priority + Active */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-medium text-gray-600 mb-1 block">
-                        Ưu tiên (nhỏ = trước)
-                      </label>
-                      <input
-                        type="number"
-                        value={deductionForm.priority}
-                        onChange={(e) =>
-                          setDeductionForm({
-                            ...deductionForm,
-                            priority: parseInt(e.target.value) || 0,
-                          })
-                        }
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
-                      />
-                    </div>
-                    <div className="flex items-end pb-1">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={deductionForm.is_active}
-                          onChange={(e) =>
-                            setDeductionForm({
-                              ...deductionForm,
-                              is_active: e.target.checked,
-                            })
-                          }
-                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span className="text-sm text-gray-700">Kích hoạt</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Preview */}
-                  <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600">
-                    <strong>Xem trước:</strong> Với lương gross 10,000,000đ →{" "}
-                    {deductionForm.calc_type === "percentage"
-                      ? `trừ ${(10000000 * deductionForm.rate).toLocaleString("vi-VN")}đ (${(deductionForm.rate * 100).toFixed(1)}%)`
-                      : `trừ ${deductionForm.amount.toLocaleString("vi-VN")}đ (cố định)`}
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={saveDeductionItem}
-                      className="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 text-sm font-medium"
-                    >
-                      <Save className="w-4 h-4 inline mr-1" />{" "}
-                      {editingDeduction ? "Cập nhật" : "Tạo"}
-                    </button>
-                    <button
-                      onClick={() => setShowDeductionForm(false)}
-                      className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                    >
-                      Hủy
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Info box */}
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-700">
-            <strong>Cách hoạt động:</strong>
-            <ul className="mt-2 space-y-1 list-disc list-inside">
-              <li>
-                Các khoản khấu trừ nằm ở <strong>Phase 3 (Deductions)</strong>{" "}
-                của Salary Engine
-              </li>
-              <li>
-                Chúng{" "}
-                <strong>KHÔNG làm thay đổi lương trước thuế (gross)</strong>
-              </li>
-              <li>
-                Công thức:{" "}
-                <strong>Net = Gross - Thuế - BHXH - BHYT - Phạt - ...</strong>
-              </li>
-              <li>
-                Khoản trừ % sẽ tính trên gross đã qua rule adjustment (sau
-                min_hours_policy)
-              </li>
-            </ul>
-          </div>
-        </div>
-      )}
-
-      {/* =================== Benefits Tab =================== */}
-      {tab === "benefits" && (isAdmin || isSalaryManager) && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-500">
-              Cấu hình phụ cấp, bảo hiểm xã hội, y tế và khấu trừ áp dụng cho
-              bảng lương.
-            </p>
-            <button
-              onClick={() => setShowBenefitForm(!showBenefitForm)}
-              className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:shadow-lg transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              {showBenefitForm ? "Đóng" : "Thêm mục"}
-            </button>
-          </div>
-
-          {showBenefitForm && (
-            <div className="bg-white rounded-2xl border border-gray-200 p-5">
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Tên
-                  </label>
-                  <input
-                    type="text"
-                    value={benefitForm.name}
-                    onChange={(e) =>
-                      setBenefitForm({ ...benefitForm, name: e.target.value })
-                    }
-                    placeholder="Phụ cấp ăn trưa"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Danh mục
-                  </label>
-                  <select
-                    value={benefitForm.category}
-                    onChange={(e) =>
-                      setBenefitForm({
-                        ...benefitForm,
-                        category: e.target.value,
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    <option value="allowance">Phụ cấp</option>
-                    <option value="insurance">Bảo hiểm (BHXH/BHYT)</option>
-                    <option value="deduction">Khấu trừ khác</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Số tiền / %
-                  </label>
-                  <input
-                    type="number"
-                    value={benefitForm.amount}
-                    onChange={(e) =>
-                      setBenefitForm({
-                        ...benefitForm,
-                        amount: Number(e.target.value),
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                    Loại
-                  </label>
-                  <select
-                    value={benefitForm.type}
-                    onChange={(e) =>
-                      setBenefitForm({
-                        ...benefitForm,
-                        type: e.target.value as "add" | "deduct",
-                      })
-                    }
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    <option value="add">Cộng (+)</option>
-                    <option value="deduct">Trừ (-)</option>
-                  </select>
-                </div>
-              </div>
-              <div className="mt-3 flex gap-2">
-                <input
-                  type="text"
-                  value={benefitForm.note}
-                  onChange={(e) =>
-                    setBenefitForm({ ...benefitForm, note: e.target.value })
-                  }
-                  placeholder="Ghi chú..."
-                  className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-                <button
-                  onClick={() => {
-                    if (!benefitForm.name.trim()) return;
-                    setBenefits([
-                      ...benefits,
-                      { ...benefitForm, id: String(Date.now()) },
-                    ]);
-                    setBenefitForm({
-                      name: "",
-                      category: "allowance",
-                      amount: 0,
-                      type: "add",
-                      note: "",
-                    });
-                    setShowBenefitForm(false);
-                  }}
-                  className="px-5 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors"
-                >
-                  Lưu
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">
-                      Tên
-                    </th>
-                    <th className="text-center px-4 py-3 font-semibold text-gray-600">
-                      Danh mục
-                    </th>
-                    <th className="text-right px-4 py-3 font-semibold text-gray-600">
-                      Số tiền / %
-                    </th>
-                    <th className="text-center px-4 py-3 font-semibold text-gray-600">
-                      Loại
-                    </th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-600">
-                      Ghi chú
-                    </th>
-                    <th className="text-right px-4 py-3 font-semibold text-gray-600">
-                      Thao tác
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {benefits.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        className="text-center py-12 text-gray-400"
-                      >
-                        Chưa có mục nào
-                      </td>
-                    </tr>
-                  ) : (
-                    benefits.map((b) => {
-                      const catLabels: Record<string, string> = {
-                        allowance: "Phụ cấp",
-                        insurance: "Bảo hiểm",
-                        deduction: "Khấu trừ",
-                      };
-                      const catStyles: Record<string, string> = {
-                        allowance: "bg-blue-100 text-blue-700",
-                        insurance: "bg-purple-100 text-purple-700",
-                        deduction: "bg-red-100 text-red-700",
-                      };
-                      return (
-                        <tr key={b.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 font-medium text-gray-900">
-                            {b.name}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-xs font-medium ${catStyles[b.category] || "bg-gray-100 text-gray-600"}`}
-                            >
-                              {catLabels[b.category] || b.category}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right tabular-nums font-medium">
-                            {b.category === "insurance"
-                              ? `${b.amount}%`
-                              : `${b.amount.toLocaleString("vi-VN")}đ`}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-xs font-medium ${b.type === "add" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
-                            >
-                              {b.type === "add" ? "+Cộng" : "-Trừ"}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">
-                            {b.note || "—"}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <button
-                              onClick={() =>
-                                setBenefits(
-                                  benefits.filter((x) => x.id !== b.id),
-                                )
-                              }
-                              className="text-xs text-red-500 hover:text-red-700 font-medium"
-                            >
-                              Xóa
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-            {benefits.length > 0 && (
-              <div className="border-t border-gray-200 px-4 py-3 bg-gray-50 flex items-center justify-between">
-                <span className="text-xs text-gray-500">
-                  {benefits.length} mục cấu hình
-                </span>
-                <div className="flex gap-4 text-sm">
-                  <span className="text-blue-600 font-medium">
-                    Tổng phụ cấp: +
-                    {benefits
-                      .filter(
-                        (b) => b.type === "add" && b.category === "allowance",
-                      )
-                      .reduce((s, b) => s + b.amount, 0)
-                      .toLocaleString("vi-VN")}
-                    đ
-                  </span>
-                  <span className="text-purple-600 font-medium">
-                    BH:{" "}
-                    {benefits
-                      .filter((b) => b.category === "insurance")
-                      .reduce((s, b) => s + b.amount, 0)}
-                    %
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* =================== Permissions Tab =================== */}
       {tab === "permissions" && isAdmin && (
@@ -5202,9 +4053,9 @@ export default function SalaryManagement() {
                           <td className="px-4 py-3 text-center text-xs text-gray-500">
                             {(p as Record<string, unknown>).grantedAt
                               ? new Date(
-                                  (p as Record<string, unknown>)
-                                    .grantedAt as string,
-                                ).toLocaleDateString("vi-VN")
+                                (p as Record<string, unknown>)
+                                  .grantedAt as string,
+                              ).toLocaleDateString("vi-VN")
                               : ""}
                           </td>
                           <td className="px-4 py-3 text-right">
@@ -5233,11 +4084,341 @@ export default function SalaryManagement() {
         </div>
       )}
 
-      {/* =================== Export Tab =================== */}
-      {tab === "export" && (isAdmin || isSalaryManager) && (
-        <ExportTemplateBuilder selectedMonth={selectedMonth} />
+      {/* =================== Context Menu Overlay =================== */}
+      {ctxMenu.visible && (
+        <div
+          className="fixed z-[9999] bg-white rounded-xl shadow-2xl border border-gray-200 py-1.5 min-w-[220px] animate-in fade-in slide-in-from-top-1 duration-150"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider font-semibold border-b border-gray-100 mb-1">
+            Cột: {ctxMenu.colLabel}
+          </div>
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors"
+            onClick={() => addColumnAt("left")}
+          >
+            <Plus className="w-3.5 h-3.5" /> Tạo cột bên trái
+          </button>
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors"
+            onClick={() => addColumnAt("right")}
+          >
+            <Plus className="w-3.5 h-3.5" /> Tạo cột bên phải
+          </button>
+          <div className="border-t border-gray-100 my-1" />
+          {!NON_EDITABLE_COLS.includes(ctxMenu.colKey) && (
+            <>
+              <button
+                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 transition-colors"
+                onClick={openRenameModal}
+              >
+                <Edit2 className="w-3.5 h-3.5" /> Đổi tên cột
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 hover:text-red-700 flex items-center gap-2 transition-colors"
+                onClick={deleteColumn}
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Xoá cột
+              </button>
+            </>
+          )}
+          {FORMULA_COLS.includes(ctxMenu.colKey) && (
+            <>
+              <div className="border-t border-gray-100 my-1" />
+              <button
+                className="w-full text-left px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors font-medium"
+                onClick={openSalaryCalcModal}
+              >
+                <Calculator className="w-3.5 h-3.5" /> Set tính lương
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* =================== Rename Column Modal =================== */}
+      {renameModal.visible && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-white">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-blue-600" />
+                Đổi tên cột
+              </h3>
+              <button
+                onClick={() =>
+                  setRenameModal({
+                    visible: false,
+                    colKey: "",
+                    newLabel: "",
+                  })
+                }
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Tên mới cho cột
+                </label>
+                <input
+                  type="text"
+                  value={renameModal.newLabel}
+                  onChange={(e) =>
+                    setRenameModal((prev) => ({
+                      ...prev,
+                      newLabel: e.target.value,
+                    }))
+                  }
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  autoFocus
+                  onKeyDown={(e) => e.key === "Enter" && confirmRename()}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button
+                onClick={() =>
+                  setRenameModal({
+                    visible: false,
+                    colKey: "",
+                    newLabel: "",
+                  })
+                }
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                Huỷ
+              </button>
+              <button
+                onClick={confirmRename}
+                className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-colors"
+              >
+                Xác nhận
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================== Salary Calculation Modal =================== */}
+      {salaryCalcModal.visible && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-white">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <Calculator className="w-5 h-5 text-indigo-600" />
+                Set tính lương — {salaryCalcModal.colLabel}
+              </h3>
+              <button
+                onClick={() =>
+                  setSalaryCalcModal((prev) => ({
+                    ...prev,
+                    visible: false,
+                  }))
+                }
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-5">
+              {/* Target selection */}
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">
+                  Áp dụng cho
+                </label>
+                <div className="flex gap-2 flex-wrap">
+                  {(
+                    [
+                      {
+                        key: "all",
+                        label: "Tất cả",
+                        desc: "Áp dụng cho toàn bộ nhân viên",
+                      },
+                      {
+                        key: "preset",
+                        label: "Theo loại lương",
+                        desc: "Áp dụng theo preset/loại lương",
+                      },
+                      {
+                        key: "individual",
+                        label: "Cá nhân",
+                        desc: "Áp dụng riêng cho 1 nhân viên",
+                      },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() =>
+                        setSalaryCalcModal((prev) => ({
+                          ...prev,
+                          targetType: opt.key,
+                          targetId: "",
+                        }))
+                      }
+                      className={`flex-1 min-w-[120px] p-3 rounded-xl border-2 text-left transition-all ${salaryCalcModal.targetType === opt.key
+                        ? "border-indigo-500 bg-indigo-50 shadow-sm"
+                        : "border-gray-200 hover:border-gray-300 bg-white"
+                        }`}
+                    >
+                      <span
+                        className={`block text-sm font-semibold ${salaryCalcModal.targetType === opt.key ? "text-indigo-700" : "text-gray-700"}`}
+                      >
+                        {opt.label}
+                      </span>
+                      <span className="block text-[11px] text-gray-400 mt-0.5">
+                        {opt.desc}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Target ID selector (for preset or individual) */}
+              {salaryCalcModal.targetType === "preset" && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Chọn loại lương (Preset)
+                  </label>
+                  <select
+                    value={salaryCalcModal.targetId}
+                    onChange={(e) =>
+                      setSalaryCalcModal((prev) => ({
+                        ...prev,
+                        targetId: e.target.value,
+                      }))
+                    }
+                    className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="">-- Chọn preset --</option>
+                    {presets.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {salaryCalcModal.targetType === "individual" && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Nhập ID nhân viên
+                  </label>
+                  <input
+                    type="text"
+                    value={salaryCalcModal.targetId}
+                    onChange={(e) =>
+                      setSalaryCalcModal((prev) => ({
+                        ...prev,
+                        targetId: e.target.value,
+                      }))
+                    }
+                    placeholder="VD: EMP001"
+                    className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+              )}
+
+              {/* Formula input */}
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">
+                  Công thức tính
+                </label>
+                <textarea
+                  value={salaryCalcModal.formula}
+                  onChange={(e) =>
+                    setSalaryCalcModal((prev) => ({
+                      ...prev,
+                      formula: e.target.value,
+                    }))
+                  }
+                  className="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-h-[100px] resize-y"
+                  placeholder="VD: base_salary * present_days / work_days_standard + ot_hours * hourly_rate * ot_multiplier"
+                />
+                <div className="mt-2 bg-gray-50 rounded-lg p-3 border border-gray-100">
+                  <p className="text-xs font-semibold text-gray-600 mb-1.5">
+                    Biến có sẵn:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {BUILTIN_BLOCKS.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() =>
+                          setSalaryCalcModal((prev) => ({
+                            ...prev,
+                            formula:
+                              prev.formula +
+                              (prev.formula ? " " : "") +
+                              b.id,
+                          }))
+                        }
+                        className="px-2 py-1 text-[11px] font-mono bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors cursor-pointer"
+                        title={b.desc}
+                      >
+                        {b.id}
+                      </button>
+                    ))}
+                    {["+", "-", "*", "/", "(", ")"].map((op) => (
+                      <button
+                        key={op}
+                        type="button"
+                        onClick={() =>
+                          setSalaryCalcModal((prev) => ({
+                            ...prev,
+                            formula:
+                              prev.formula +
+                              (prev.formula ? " " : "") +
+                              op,
+                          }))
+                        }
+                        className="px-2.5 py-1 text-[11px] font-bold bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 hover:border-amber-400 text-amber-700 cursor-pointer transition-colors"
+                      >
+                        {op}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button
+                onClick={() =>
+                  setSalaryCalcModal((prev) => ({
+                    ...prev,
+                    visible: false,
+                  }))
+                }
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                Huỷ
+              </button>
+              <button
+                onClick={saveSalaryFormula}
+                disabled={savingFormula}
+                className="px-5 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingFormula ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Đang lưu...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    Lưu công thức
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 }
-
