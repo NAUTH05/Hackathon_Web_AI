@@ -60,6 +60,9 @@ type Tab =
   | "attendance"
   | "presets"
   | "assign"
+  | "coefficients"
+  | "rules"
+  | "deductions"
   | "permissions";
 
 type PayrollRule = {
