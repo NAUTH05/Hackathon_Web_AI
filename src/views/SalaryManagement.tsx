@@ -975,11 +975,23 @@ export default function SalaryManagement() {
   }, [assignPage, assignSearch, assignDeptFilter]);
 
   useEffect(() => {
-    if (tab === "salary") loadSalaryRecords();
-    if (tab === "coefficients") loadCoefficients();
-    if (tab === "rules") loadPayrollRules();
-    if (tab === "deductions") loadDeductionItems();
-    if (tab === "permissions") loadPermissions();
+    switch (tab) {
+      case "salary":
+        loadSalaryRecords();
+        break;
+      case "coefficients":
+        loadCoefficients();
+        break;
+      case "rules":
+        loadPayrollRules();
+        break;
+      case "deductions":
+        loadDeductionItems();
+        break;
+      case "permissions":
+        loadPermissions();
+        break;
+    }
   }, [tab, loadSalaryRecords]);
 
   useEffect(() => {
