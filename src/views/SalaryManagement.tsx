@@ -252,6 +252,7 @@ export default function SalaryManagement() {
     desc: "",
   });
   const [savingNewVar, setSavingNewVar] = useState(false);
+  const [customFormulas, setCustomFormulas] = useState<Record<string, string>>({});
 
   async function saveCustomVar() {
     if (!newVarForm.label || !newVarForm.value) return;
@@ -538,8 +539,8 @@ export default function SalaryManagement() {
   };
 
   // Evaluate expression client-side for preview
-  function evalExpressionPreview(expr: string): number | null {
-    if (!expr.trim()) return null;
+  function evalExpression(expr: string, scope: Record<string, number>): number | null {
+    if (!expr?.trim()) return null;
     try {
       const tokens: { type: string; value: any }[] = [];
       let i = 0;
@@ -561,7 +562,7 @@ export default function SalaryManagement() {
             name += s[i];
             i++;
           }
-          tokens.push({ type: "num", value: SAMPLE_VARS[name] ?? 0 });
+          tokens.push({ type: "num", value: scope[name] ?? 0 });
         } else {
           i++;
         }
@@ -618,6 +619,10 @@ export default function SalaryManagement() {
     }
   }
 
+  function evalExpressionPreview(expr: string): number | null {
+    return evalExpression(expr, SAMPLE_VARS);
+  }
+
   // Get the effective expression (from text or auto-generated from blocks)
   function getEffectiveExpression(): string {
     if (formulaMode === "text" && presetForm.customExpression) {
@@ -651,14 +656,17 @@ export default function SalaryManagement() {
     },
     { key: "present_days", label: "Ngày công", visible: true, order: 7 },
     { key: "ot", label: "OT", visible: true, order: 8 },
-    { key: "rule_details", label: "Ràng buộc", visible: false, order: 9 },
+    { key: "allowances", label: "Phụ cấp", visible: false, order: 9 },
+    { key: "deductions", label: "Khấu trừ", visible: false, order: 10 },
+    { key: "late_penalty", label: "Phạt trễ", visible: false, order: 11 },
+    { key: "rule_details", label: "Ràng buộc", visible: false, order: 12 },
     {
       key: "gross_salary",
       label: "Lương trước thuế",
       visible: true,
-      order: 10,
+      order: 13,
     },
-    { key: "net_salary", label: "Lương ròng", visible: true, order: 11 },
+    { key: "net_salary", label: "Lương ròng", visible: true, order: 14 },
   ];
 
   // OT adjustment popup
@@ -964,6 +972,7 @@ export default function SalaryManagement() {
     }
     setSavingFormula(true);
     try {
+      const saveFormulaEn = getFormulaTranslators().viToEn(salaryCalcModal.formula);
       const res = await fetch(buildApiUrl("/salary/formula-config"), {
         method: "PUT",
         headers: {
@@ -974,13 +983,14 @@ export default function SalaryManagement() {
           column: salaryCalcModal.colKey,
           targetType: salaryCalcModal.targetType,
           targetId: salaryCalcModal.targetId || null,
-          formula: isNet ? null : getFormulaTranslators().viToEn(salaryCalcModal.formula),
+          formula: isNet ? null : saveFormulaEn,
           deductionConfig: isNet ? salaryCalcModal.deductionConfig : null,
         }),
       });
       if (res.ok) {
         showToast("success", isNet ? "Đã lưu cấu hình khoản trừ" : "Đã lưu công thức tính lương");
         setSalaryCalcModal((prev) => ({ ...prev, visible: false }));
+        if (!isNet) setCustomFormulas(prev => ({ ...prev, [salaryCalcModal.colKey]: saveFormulaEn }));
       } else {
         showToast("error", "Lỗi khi lưu");
       }
@@ -1039,19 +1049,48 @@ export default function SalaryManagement() {
       });
       if (res.ok) {
         const data = await res.json();
+        let finalCols = [...DEFAULT_COLUMNS];
         if (data.columns?.length) {
-          const merged = [...DEFAULT_COLUMNS];
           data.columns.forEach((dbCol: any) => {
-            const idx = merged.findIndex(c => c.key === dbCol.key);
+            const idx = finalCols.findIndex(c => c.key === dbCol.key);
             if (idx >= 0) {
-              merged[idx] = { ...merged[idx], visible: dbCol.visible };
+              finalCols[idx] = { ...finalCols[idx], visible: dbCol.visible };
             } else {
-              merged.push(dbCol);
+              finalCols.push(dbCol);
             }
           });
-          setTableColumns(merged);
-          return;
         }
+        
+        finalCols.sort((a, b) => {
+          const isStandardA = !a.key.startsWith("custom_");
+          const isStandardB = !b.key.startsWith("custom_");
+          if (a.key === "gross_salary" && b.key !== "gross_salary" && b.key !== "net_salary") return 1;
+          if (b.key === "gross_salary" && a.key !== "gross_salary" && a.key !== "net_salary") return -1;
+          if (a.key === "net_salary") return 1;
+          if (b.key === "net_salary") return -1;
+          if (!isStandardA && isStandardB) return 1;
+          if (isStandardA && !isStandardB) return -1;
+          return a.order - b.order;
+        });
+
+        setTableColumns(finalCols);
+
+        // Fetch custom formulas
+        const customColKeys = finalCols.filter(col => col.key.startsWith("custom_")).map(c => c.key);
+        const fMap: Record<string, string> = {};
+        await Promise.all(customColKeys.map(async (key) => {
+          try {
+            const fRes = await fetch(buildApiUrl(`/salary/formula-config?column=${key}&targetType=all`), {
+              headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` }
+            });
+            if (fRes.ok) {
+              const cfg = await fRes.json();
+              if (cfg?.formula) fMap[key] = cfg.formula;
+            }
+          } catch {}
+        }));
+        setCustomFormulas(fMap);
+        return;
       }
     } catch { }
     setTableColumns(DEFAULT_COLUMNS);
@@ -1073,7 +1112,7 @@ export default function SalaryManagement() {
 
   function isColVisible(key: string) {
     const col = tableColumns.find((c) => c.key === key);
-    return col ? col.visible : true;
+    return col ? col.visible : false;
   }
 
   function toggleColVisible(key: string) {
@@ -2628,6 +2667,36 @@ export default function SalaryManagement() {
                             })()}
                           </td>
                         )}
+                        {/* Custom columns — evaluated dynamically BEFORE Gross / Net */}
+                        {tableColumns
+                          .filter((col) => col.visible && col.key.startsWith("custom_"))
+                          .map((col) => {
+                             const expr = customFormulas[col.key];
+                             let val: number | null = null;
+                             if (expr) {
+                               const scope: Record<string, number> = {
+                                 working_hours: r.effectiveHours ?? r.totalWorkingHours ?? 0,
+                                 present_days: typeof r.presentDays === 'number' ? r.presentDays : parseFloat(r.presentDays) || 0,
+                                 hourly_rate: (r.baseSalary || 0) / (22 * 8), 
+                                 base_salary: r.baseSalary || 0,
+                                 ot_hours: r.otHours || 0,
+                                 ot_multiplier: 1.5,
+                                 allowances: r.allowances || 0,
+                                 deductions: r.deductions || 0,
+                                 late_penalty: r.latePenalty || 0,
+                               };
+                               customVars.forEach(v => { scope[v.id] = v.value; });
+                               val = evalExpression(expr, scope);
+                             }
+                             return (
+                               <td
+                                 key={col.key}
+                                 className="px-3 py-3 text-right text-gray-700 font-medium whitespace-nowrap"
+                               >
+                                 {val !== null ? fmt(val) : "—"}
+                               </td>
+                             )
+                          })}
                         {isColVisible("gross_salary") && (
                           <td className="px-3 py-3 text-right font-medium text-gray-800">
                             {fmt(r.grossSalary)}
@@ -2638,17 +2707,6 @@ export default function SalaryManagement() {
                             {fmt(r.netSalary)}
                           </td>
                         )}
-                        {/* Custom columns — default empty */}
-                        {tableColumns
-                          .filter((col) => col.visible && col.key.startsWith("custom_"))
-                          .map((col) => (
-                            <td
-                              key={col.key}
-                              className="px-3 py-3 text-center text-gray-300 text-xs"
-                            >
-                              —
-                            </td>
-                          ))}
                       </tr>
                     ))}
                   </tbody>
@@ -2657,11 +2715,21 @@ export default function SalaryManagement() {
                       <tfoot>
                         <tr className="bg-emerald-50 border-t-2 border-emerald-200">
                           <td
-                            colSpan={visibleColCount - 2}
+                            colSpan={
+                              visibleColCount - 
+                              tableColumns.filter((col) => col.visible && col.key.startsWith("custom_")).length - 
+                              (isColVisible("gross_salary") ? 1 : 0) - 
+                              (isColVisible("net_salary") ? 1 : 0)
+                            }
                             className="px-3 py-3 font-semibold text-emerald-800"
                           >
                             Tổng cộng ({salaryTotal} NV)
                           </td>
+                          {tableColumns
+                            .filter((col) => col.visible && col.key.startsWith("custom_"))
+                            .map((col) => (
+                              <td key={col.key} className="px-3 py-3" />
+                            ))}
                           {isColVisible("gross_salary") && (
                             <td className="px-3 py-3 text-right font-bold text-gray-800">
                               {fmt(salaryTotalGross)}
@@ -2672,11 +2740,6 @@ export default function SalaryManagement() {
                               {fmt(totalNet)}
                             </td>
                           )}
-                          {tableColumns
-                            .filter((col) => col.visible && col.key.startsWith("custom_"))
-                            .map((col) => (
-                              <td key={col.key} className="px-3 py-3" />
-                            ))}
                         </tr>
                       </tfoot>
                     )}
