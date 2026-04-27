@@ -1327,4 +1327,143 @@ router.put('/table-config', authenticate, async (req, res) => {
   }
 });
 
+// ========== FORMULA CONFIG (for "Set tính lương" modal) ==========
+
+// GET /api/salary/formula-config?column=<colKey>&targetType=<all|preset|individual>&targetId=<id>
+router.get('/formula-config', authenticate, async (req, res) => {
+  try {
+    const { column, targetType, targetId } = req.query;
+    if (!column) return res.status(400).json({ error: 'Thiếu column' });
+
+    let rows;
+    if (targetType && targetType !== 'all' && targetId) {
+      [rows] = await pool.execute(
+        'SELECT * FROM salary_formula_config WHERE column_key = ? AND target_type = ? AND target_id = ?',
+        [column, targetType, targetId]
+      );
+    } else {
+      [rows] = await pool.execute(
+        'SELECT * FROM salary_formula_config WHERE column_key = ? AND target_type = ? AND target_id IS NULL',
+        [column, targetType || 'all']
+      );
+    }
+
+    if (rows.length > 0) {
+      const row = rows[0];
+      res.json({
+        id: row.id,
+        column: row.column_key,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        formula: row.formula,
+        deductionConfig: typeof row.deduction_config === 'string' ? JSON.parse(row.deduction_config) : row.deduction_config,
+      });
+    } else {
+      res.json(null);
+    }
+  } catch (err) {
+    console.error('Get formula config error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/formula-config — save or update formula config
+router.put('/formula-config', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { column, targetType, targetId, formula, deductionConfig } = req.body;
+    if (!column) return res.status(400).json({ error: 'Thiếu column' });
+
+    const dedCfgStr = deductionConfig ? JSON.stringify(deductionConfig) : null;
+    const tid = (targetType === 'all' || !targetId) ? null : targetId;
+
+    await pool.execute(
+      `INSERT INTO salary_formula_config (column_key, target_type, target_id, formula, deduction_config, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE formula = VALUES(formula), deduction_config = VALUES(deduction_config)`,
+      [column, targetType || 'all', tid, formula || null, dedCfgStr, req.user.id]
+    );
+    res.json({ success: true, message: 'Đã lưu công thức' });
+  } catch (err) {
+    console.error('Save formula config error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// GET /api/salary/formula-config/by-preset/:presetId — load formula from preset's custom_formula
+router.get('/formula-config/by-preset/:presetId', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT custom_formula, formula_type FROM salary_presets WHERE id = ?',
+      [req.params.presetId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Preset không tồn tại' });
+
+    const preset = rows[0];
+    let parsedFormula = null;
+    try {
+      parsedFormula = preset.custom_formula ? JSON.parse(preset.custom_formula) : null;
+    } catch { parsedFormula = null; }
+
+    res.json({
+      formulaType: preset.formula_type,
+      customFormula: parsedFormula,
+      rawFormula: preset.custom_formula,
+    });
+  } catch (err) {
+    console.error('Get preset formula error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// GET /api/salary/deduction-items — list all deduction items
+router.get('/deduction-items', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM salary_deduction_items ORDER BY priority ASC');
+    res.json(rows);
+  } catch (err) {
+    console.error('Get deduction items error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// POST /api/salary/deduction-items — add a new deduction item
+router.post('/deduction-items', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { name, type, calc_type, amount, rate, description, priority } = req.body;
+    if (!name || !type) return res.status(400).json({ error: 'Thiếu name hoặc type' });
+    const id = 'ded_' + uuidv4().slice(0, 8);
+    await pool.execute(
+      `INSERT INTO salary_deduction_items (id, name, type, calc_type, amount, rate, description, priority, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [id, name, type || 'custom', calc_type || 'fixed', amount || 0, rate || 0, description || '', priority || 99, req.user.id]
+    );
+    res.json({ id, message: 'Đã tạo khoản trừ' });
+  } catch (err) {
+    console.error('Create deduction item error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/deduction-items/:id — update a deduction item
+router.put('/deduction-items/:id', authenticate, requireSalaryRole, async (req, res) => {
+  try {
+    const { name, calc_type, amount, rate, description, is_active } = req.body;
+    await pool.execute(
+      `UPDATE salary_deduction_items SET
+        name = COALESCE(?, name),
+        calc_type = COALESCE(?, calc_type),
+        amount = COALESCE(?, amount),
+        rate = COALESCE(?, rate),
+        description = COALESCE(?, description),
+        is_active = COALESCE(?, is_active)
+       WHERE id = ?`,
+      [name, calc_type, amount, rate, description, is_active, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update deduction item error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
 module.exports = router;

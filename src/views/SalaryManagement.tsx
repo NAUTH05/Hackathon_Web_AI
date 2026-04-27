@@ -677,6 +677,7 @@ export default function SalaryManagement() {
     targetType: "individual" | "preset" | "all";
     targetId: string;
     formula: string;
+    deductionConfig: { id: string; name: string; type: string; calc_type: string; rate: number; amount: number; enabled: boolean }[];
   }>({
     visible: false,
     colKey: "",
@@ -684,8 +685,16 @@ export default function SalaryManagement() {
     targetType: "all",
     targetId: "",
     formula: "",
+    deductionConfig: [],
   });
   const [savingFormula, setSavingFormula] = useState(false);
+
+  // New column modal state (replaces prompt())
+  const [newColModal, setNewColModal] = useState<{
+    visible: boolean;
+    position: "left" | "right";
+    name: string;
+  }>({ visible: false, position: "right", name: "" });
 
   // Close context menu on click outside
   useEffect(() => {
@@ -714,26 +723,30 @@ export default function SalaryManagement() {
   }
 
   function addColumnAt(position: "left" | "right") {
-    const colName = prompt("Nhập tên cột mới:");
-    if (!colName || !colName.trim()) return;
+    setNewColModal({ visible: true, position, name: "" });
+    setCtxMenu((prev) => ({ ...prev, visible: false }));
+  }
+
+  function confirmAddColumn() {
+    const colName = newColModal.name.trim();
+    if (!colName) return;
     const key = `custom_${Date.now()}`;
     const idx = ctxMenu.colIndex;
-    const insertIdx = position === "left" ? idx : idx + 1;
+    const insertIdx = newColModal.position === "left" ? idx : idx + 1;
     const updated = [...tableColumns];
-    // Shift orders to make room
     updated.forEach((c, i) => {
       if (i >= insertIdx) c.order = c.order + 1;
     });
     updated.splice(insertIdx, 0, {
       key,
-      label: colName.trim(),
+      label: colName,
       visible: true,
       order: insertIdx + 1,
     });
-    // Re-normalize orders
     updated.forEach((c, i) => (c.order = i + 1));
     saveTableConfig(updated);
-    setCtxMenu((prev) => ({ ...prev, visible: false }));
+    setNewColModal({ visible: false, position: "right", name: "" });
+    showToast("success", `Đã tạo cột "${colName}" (giá trị mặc định: 0)`);
   }
 
   function deleteColumn() {
@@ -772,20 +785,131 @@ export default function SalaryManagement() {
     setRenameModal({ visible: false, colKey: "", newLabel: "" });
   }
 
-  function openSalaryCalcModal() {
+  async function openSalaryCalcModal() {
+    const colKey = ctxMenu.colKey;
+    const colLabel = ctxMenu.colLabel;
+    setCtxMenu((prev) => ({ ...prev, visible: false }));
+
+    // Load deduction items for net_salary column
+    let dedItems: any[] = [];
+    if (colKey === "net_salary") {
+      try {
+        const dRes = await fetch(buildApiUrl("/salary/deduction-items"), {
+          headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` },
+        });
+        if (dRes.ok) dedItems = await dRes.json();
+      } catch { }
+      setDeductionItems(dedItems);
+    }
+
+    // Load existing formula config
+    let existingFormula = "";
+    let existingDedCfg: any[] = [];
+    try {
+      const cfgRes = await fetch(
+        buildApiUrl(`/salary/formula-config?column=${colKey}&targetType=all`),
+        { headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` } }
+      );
+      if (cfgRes.ok) {
+        const cfg = await cfgRes.json();
+        if (cfg) {
+          existingFormula = cfg.formula || "";
+          existingDedCfg = cfg.deductionConfig || [];
+        }
+      }
+    } catch { }
+
+    // Build deduction config: merge DB items with saved config
+    const mergedDedCfg = dedItems.map((item: any) => {
+      const saved = existingDedCfg.find((s: any) => s.id === item.id);
+      return {
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        calc_type: saved?.calc_type || item.calc_type || "percentage",
+        rate: saved?.rate ?? (parseFloat(item.rate) || 0),
+        amount: saved?.amount ?? (parseFloat(item.amount) || 0),
+        enabled: saved?.enabled ?? (item.is_active === 1),
+      };
+    });
+
     setSalaryCalcModal({
       visible: true,
-      colKey: ctxMenu.colKey,
-      colLabel: ctxMenu.colLabel,
+      colKey,
+      colLabel,
       targetType: "all",
       targetId: "",
-      formula: "",
+      formula: existingFormula,
+      deductionConfig: mergedDedCfg,
     });
-    setCtxMenu((prev) => ({ ...prev, visible: false }));
+  }
+
+  async function loadPresetFormula(presetId: string) {
+    if (!presetId) return;
+    try {
+      const res = await fetch(buildApiUrl(`/salary/formula-config/by-preset/${presetId}`), {
+        headers: { Authorization: `Bearer ${localStorage.getItem("auth_token")}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.customFormula?.customExpression) {
+          setSalaryCalcModal((prev) => ({
+            ...prev,
+            formula: data.customFormula.customExpression,
+          }));
+        }
+      }
+    } catch { }
+  }
+
+  function applyQuickTemplate(tpl: string) {
+    const templates: Record<string, string> = {
+      hourly_ot: "working_hours * hourly_rate + ot_hours * hourly_rate * ot_multiplier + allowances",
+      daily: "daily_rate * present_days + ot_hours * hourly_rate * ot_multiplier + allowances",
+      fixed_allowance: "base_salary + allowances",
+    };
+    setSalaryCalcModal((prev) => ({ ...prev, formula: templates[tpl] || prev.formula }));
+  }
+
+  function toggleModalDeduction(id: string) {
+    setSalaryCalcModal((prev) => ({
+      ...prev,
+      deductionConfig: prev.deductionConfig.map((d) =>
+        d.id === id ? { ...d, enabled: !d.enabled } : d
+      ),
+    }));
+  }
+
+  function updateModalDeduction(id: string, field: string, value: any) {
+    setSalaryCalcModal((prev) => ({
+      ...prev,
+      deductionConfig: prev.deductionConfig.map((d) =>
+        d.id === id ? { ...d, [field]: value } : d
+      ),
+    }));
+  }
+
+  function addCustomDeduction() {
+    const name = prompt("Tên khoản trừ mới:");
+    if (!name?.trim()) return;
+    const newItem = {
+      id: `ded_custom_${Date.now()}`,
+      name: name.trim(),
+      type: "custom",
+      calc_type: "fixed" as const,
+      rate: 0,
+      amount: 0,
+      enabled: true,
+    };
+    setSalaryCalcModal((prev) => ({
+      ...prev,
+      deductionConfig: [...prev.deductionConfig, newItem],
+    }));
   }
 
   async function saveSalaryFormula() {
-    if (!salaryCalcModal.formula.trim()) {
+    const isNet = salaryCalcModal.colKey === "net_salary";
+    if (!isNet && !salaryCalcModal.formula.trim()) {
       showToast("error", "Vui lòng nhập công thức");
       return;
     }
@@ -801,14 +925,15 @@ export default function SalaryManagement() {
           column: salaryCalcModal.colKey,
           targetType: salaryCalcModal.targetType,
           targetId: salaryCalcModal.targetId || null,
-          formula: salaryCalcModal.formula,
+          formula: isNet ? null : salaryCalcModal.formula,
+          deductionConfig: isNet ? salaryCalcModal.deductionConfig : null,
         }),
       });
       if (res.ok) {
-        showToast("success", "Đã lưu công thức tính lương");
+        showToast("success", isNet ? "Đã lưu cấu hình khoản trừ" : "Đã lưu công thức tính lương");
         setSalaryCalcModal((prev) => ({ ...prev, visible: false }));
       } else {
-        showToast("error", "Lỗi khi lưu công thức");
+        showToast("error", "Lỗi khi lưu");
       }
     } catch {
       showToast("error", "Lỗi kết nối server");
@@ -4138,14 +4263,15 @@ export default function SalaryManagement() {
               </button>
             </>
           )}
-          {FORMULA_COLS.includes(ctxMenu.colKey) && (
+          {(FORMULA_COLS.includes(ctxMenu.colKey) || ctxMenu.colKey.startsWith("custom_")) && (
             <>
               <div className="border-t border-gray-100 my-1" />
               <button
                 className="w-full text-left px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 transition-colors font-medium"
                 onClick={openSalaryCalcModal}
               >
-                <Calculator className="w-3.5 h-3.5" /> Set tính lương
+                <Calculator className="w-3.5 h-3.5" />
+                {ctxMenu.colKey.startsWith("custom_") ? "Sửa công thức cột" : "Set tính lương"}
               </button>
             </>
           )}
@@ -4221,7 +4347,7 @@ export default function SalaryManagement() {
       {/* =================== Salary Calculation Modal =================== */}
       {salaryCalcModal.visible && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl mx-4 overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-2xl mx-4 overflow-hidden max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-white">
               <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                 <Calculator className="w-5 h-5 text-indigo-600" />
@@ -4239,7 +4365,7 @@ export default function SalaryManagement() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-6 space-y-5">
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
               {/* Target selection */}
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">
@@ -4300,12 +4426,16 @@ export default function SalaryManagement() {
                   </label>
                   <select
                     value={salaryCalcModal.targetId}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const pid = e.target.value;
                       setSalaryCalcModal((prev) => ({
                         ...prev,
-                        targetId: e.target.value,
-                      }))
-                    }
+                        targetId: pid,
+                      }));
+                      if (pid && salaryCalcModal.colKey !== "net_salary") {
+                        loadPresetFormula(pid);
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   >
                     <option value="">-- Chọn preset --</option>
@@ -4332,73 +4462,192 @@ export default function SalaryManagement() {
                         targetId: e.target.value,
                       }))
                     }
-                    placeholder="VD: EMP001"
+                    placeholder="VD: emp-001"
                     className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   />
                 </div>
               )}
 
-              {/* Formula input */}
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">
-                  Công thức tính
-                </label>
-                <textarea
-                  value={salaryCalcModal.formula}
-                  onChange={(e) =>
-                    setSalaryCalcModal((prev) => ({
-                      ...prev,
-                      formula: e.target.value,
-                    }))
-                  }
-                  className="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-h-[100px] resize-y"
-                  placeholder="VD: base_salary * present_days / work_days_standard + ot_hours * hourly_rate * ot_multiplier"
-                />
-                <div className="mt-2 bg-gray-50 rounded-lg p-3 border border-gray-100">
-                  <p className="text-xs font-semibold text-gray-600 mb-1.5">
-                    Biến có sẵn:
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {BUILTIN_BLOCKS.map((b) => (
-                      <button
-                        key={b.id}
-                        type="button"
-                        onClick={() =>
-                          setSalaryCalcModal((prev) => ({
-                            ...prev,
-                            formula:
-                              prev.formula +
-                              (prev.formula ? " " : "") +
-                              b.id,
-                          }))
-                        }
-                        className="px-2 py-1 text-[11px] font-mono bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors cursor-pointer"
-                        title={b.desc}
-                      >
-                        {b.id}
-                      </button>
-                    ))}
-                    {["+", "-", "*", "/", "(", ")"].map((op) => (
-                      <button
-                        key={op}
-                        type="button"
-                        onClick={() =>
-                          setSalaryCalcModal((prev) => ({
-                            ...prev,
-                            formula:
-                              prev.formula +
-                              (prev.formula ? " " : "") +
-                              op,
-                          }))
-                        }
-                        className="px-2.5 py-1 text-[11px] font-bold bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 hover:border-amber-400 text-amber-700 cursor-pointer transition-colors"
-                      >
-                        {op}
-                      </button>
-                    ))}
+              {/* ===== GROSS SALARY: Formula editor ===== */}
+              {salaryCalcModal.colKey !== "net_salary" && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    Công thức tính
+                  </label>
+                  <textarea
+                    value={salaryCalcModal.formula}
+                    onChange={(e) =>
+                      setSalaryCalcModal((prev) => ({
+                        ...prev,
+                        formula: e.target.value,
+                      }))
+                    }
+                    className="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-h-[100px] resize-y"
+                    placeholder="VD: base_salary * present_days / work_days_standard + ot_hours * hourly_rate * ot_multiplier"
+                  />
+                  <div className="mt-2 bg-gray-50 rounded-lg p-3 border border-gray-100">
+                    <p className="text-xs font-semibold text-gray-600 mb-1.5">
+                      Biến có sẵn:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {BUILTIN_BLOCKS.map((b) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() =>
+                            setSalaryCalcModal((prev) => ({
+                              ...prev,
+                              formula:
+                                prev.formula +
+                                (prev.formula ? " " : "") +
+                                b.id,
+                            }))
+                          }
+                          className="px-2 py-1 text-[11px] font-mono bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors cursor-pointer"
+                          title={b.desc}
+                        >
+                          {b.id}
+                        </button>
+                      ))}
+                      {["+", "-", "*", "/", "(", ")"].map((op) => (
+                        <button
+                          key={op}
+                          type="button"
+                          onClick={() =>
+                            setSalaryCalcModal((prev) => ({
+                              ...prev,
+                              formula:
+                                prev.formula +
+                                (prev.formula ? " " : "") +
+                                op,
+                            }))
+                          }
+                          className="px-2.5 py-1 text-[11px] font-bold bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 hover:border-amber-400 text-amber-700 cursor-pointer transition-colors"
+                        >
+                          {op}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Quick templates */}
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold text-gray-600 mb-1.5">
+                      Mẫu công thức nhanh:
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { key: "hourly_ot", label: "Theo giờ + OT" },
+                        { key: "daily", label: "Theo ngày công" },
+                        { key: "fixed_allowance", label: "Cố định + phụ cấp" },
+                      ].map((t) => (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => applyQuickTemplate(t.key)}
+                          className="px-3 py-1.5 text-xs font-medium bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 hover:border-emerald-400 text-emerald-700 cursor-pointer transition-colors"
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
+
+              {/* ===== NET SALARY: Deduction items list ===== */}
+              {salaryCalcModal.colKey === "net_salary" && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    Các khoản khấu trừ từ Lương trước thuế
+                  </label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Lương ròng = Lương trước thuế − Σ(các khoản trừ bật). Bật/tắt và chỉnh tỷ lệ bên dưới.
+                  </p>
+                  <div className="space-y-2">
+                    {salaryCalcModal.deductionConfig.map((d) => (
+                      <div
+                        key={d.id}
+                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${d.enabled
+                          ? "border-indigo-200 bg-indigo-50/50"
+                          : "border-gray-200 bg-gray-50 opacity-60"
+                          }`}
+                      >
+                        {/* Toggle */}
+                        <button
+                          type="button"
+                          onClick={() => toggleModalDeduction(d.id)}
+                          className={`w-10 h-5 rounded-full transition-colors relative flex-shrink-0 ${d.enabled ? "bg-indigo-500" : "bg-gray-300"}`}
+                        >
+                          <span
+                            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${d.enabled ? "left-5" : "left-0.5"}`}
+                          />
+                        </button>
+                        {/* Name */}
+                        <span className="text-sm font-medium text-gray-800 min-w-[140px]">
+                          {d.name}
+                        </span>
+                        {/* Type selector */}
+                        <select
+                          value={d.calc_type}
+                          onChange={(e) =>
+                            updateModalDeduction(d.id, "calc_type", e.target.value)
+                          }
+                          className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white"
+                          disabled={!d.enabled}
+                        >
+                          <option value="percentage">% gross</option>
+                          <option value="fixed">Cố định (đ)</option>
+                        </select>
+                        {/* Value input */}
+                        {d.calc_type === "percentage" ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={parseFloat((d.rate * 100).toFixed(2))}
+                              onChange={(e) =>
+                                updateModalDeduction(
+                                  d.id,
+                                  "rate",
+                                  parseFloat(e.target.value || "0") / 100
+                                )
+                              }
+                              className="w-20 text-xs border border-gray-300 rounded-lg px-2 py-1.5 text-right"
+                              disabled={!d.enabled}
+                            />
+                            <span className="text-xs text-gray-500">%</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              value={d.amount}
+                              onChange={(e) =>
+                                updateModalDeduction(
+                                  d.id,
+                                  "amount",
+                                  parseFloat(e.target.value || "0")
+                                )
+                              }
+                              className="w-28 text-xs border border-gray-300 rounded-lg px-2 py-1.5 text-right"
+                              disabled={!d.enabled}
+                            />
+                            <span className="text-xs text-gray-500">đ</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Add custom deduction */}
+                  <button
+                    type="button"
+                    onClick={addCustomDeduction}
+                    className="mt-3 flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Thêm khoản trừ mới
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 px-6 py-4 bg-gray-50 border-t border-gray-100">
@@ -4429,6 +4678,60 @@ export default function SalaryManagement() {
                     Lưu công thức
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================== New Column Modal =================== */}
+      {newColModal.visible && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-md mx-4 overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-emerald-50 to-white">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <Plus className="w-5 h-5 text-emerald-600" />
+                Tạo cột mới
+              </h3>
+              <button
+                onClick={() => setNewColModal({ visible: false, position: "right", name: "" })}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Tên cột
+                </label>
+                <input
+                  type="text"
+                  value={newColModal.name}
+                  onChange={(e) => setNewColModal((prev) => ({ ...prev, name: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all"
+                  autoFocus
+                  placeholder="VD: Thưởng KPI, Phí gửi xe..."
+                  onKeyDown={(e) => e.key === "Enter" && confirmAddColumn()}
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                Giá trị mặc định trong cột mới sẽ là <span className="font-semibold text-gray-700">0</span> nếu tên cột không trùng dữ liệu có sẵn trong hệ thống.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button
+                onClick={() => setNewColModal({ visible: false, position: "right", name: "" })}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                Huỷ
+              </button>
+              <button
+                onClick={confirmAddColumn}
+                disabled={!newColModal.name.trim()}
+                className="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition-colors disabled:opacity-50"
+              >
+                Tạo cột
               </button>
             </div>
           </div>

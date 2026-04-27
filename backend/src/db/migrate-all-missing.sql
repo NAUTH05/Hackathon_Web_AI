@@ -129,4 +129,19 @@ ALTER TABLE salary_records
     ADD COLUMN IF NOT EXISTS min_hours_penalty_rate DECIMAL(4,2) DEFAULT NULL COMMENT 'Penalty rate applied (e.g. 0.7 = 30% reduction)',
     ADD COLUMN IF NOT EXISTS rule_details TEXT DEFAULT NULL COMMENT 'JSON array of applied rules with descriptions';
 
+-- ========== 6. salary_formula_config (for /api/salary/formula-config) ==========
+CREATE TABLE IF NOT EXISTS salary_formula_config (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    column_key VARCHAR(50) NOT NULL COMMENT 'Which salary column: gross_salary, net_salary, custom_*',
+    target_type ENUM('all', 'preset', 'individual') NOT NULL DEFAULT 'all',
+    target_id VARCHAR(50) DEFAULT NULL COMMENT 'preset_id or employee_id when target_type != all',
+    formula TEXT DEFAULT NULL COMMENT 'Text formula for gross (e.g. base_salary * present_days / 22)',
+    deduction_config JSON DEFAULT NULL COMMENT 'For net_salary: array of {id, enabled, calc_type, rate, amount}',
+    created_by VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE INDEX idx_formula_unique (column_key, target_type, target_id),
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SELECT 'All migrations applied successfully!' AS status;
