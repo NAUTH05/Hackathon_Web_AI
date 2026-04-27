@@ -251,6 +251,24 @@ export default function SalaryManagement() {
     value: "",
     desc: "",
   });
+  const [savingNewVar, setSavingNewVar] = useState(false);
+
+  async function saveCustomVar() {
+    if (!newVarForm.label || !newVarForm.value) return;
+    setSavingNewVar(true);
+    try {
+      const id = "custom_" + Date.now();
+      const res = await fetch(buildApiUrl("/salary/variables"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("auth_token")}` },
+        body: JSON.stringify({ id, label: newVarForm.label, value: Number(newVarForm.value), description: newVarForm.desc }),
+      });
+      if (res.ok) {
+        setCustomVars(prev => [...prev, { id, label: newVarForm.label, value: Number(newVarForm.value), desc: newVarForm.desc }]);
+        setNewVarForm({ label: "", value: "", desc: "" });
+      }
+    } catch {} finally { setSavingNewVar(false); }
+  }
 
   // Drag-and-drop formula builder
   type FormulaNode = {
@@ -829,13 +847,14 @@ export default function SalaryManagement() {
       };
     });
 
+    const { enToVi } = getFormulaTranslators();
     setSalaryCalcModal({
       visible: true,
       colKey,
       colLabel,
       targetType: "all",
       targetId: "",
-      formula: existingFormula,
+      formula: enToVi(existingFormula),
       deductionConfig: mergedDedCfg,
     });
   }
@@ -877,11 +896,26 @@ export default function SalaryManagement() {
     } catch { }
   }
 
+  function getFormulaTranslators() {
+    const items = [...BUILTIN_BLOCKS, ...customVars].sort((a,b) => b.label.length - a.label.length);
+    const enToVi = (f: string) => {
+      let r = f || "";
+      items.forEach(i => { r = r.split(i.id).join(i.label); });
+      return r;
+    };
+    const viToEn = (f: string) => {
+      let r = f || "";
+      items.forEach(i => { r = r.split(i.label).join(i.id); });
+      return r;
+    };
+    return { enToVi, viToEn };
+  }
+
   function applyQuickTemplate(tpl: string) {
     const templates: Record<string, string> = {
-      hourly_ot: "working_hours * hourly_rate + ot_hours * hourly_rate * ot_multiplier + allowances",
-      daily: "daily_rate * present_days + ot_hours * hourly_rate * ot_multiplier + allowances",
-      fixed_allowance: "base_salary + allowances",
+      hourly_ot: "Giờ làm thực tế * Lương 1 giờ + Giờ OT đã duyệt * Lương 1 giờ * Hệ số OT + Phụ cấp (Preset)",
+      daily: "Lương 1 ngày * Ngày công + Giờ OT đã duyệt * Lương 1 giờ * Hệ số OT + Phụ cấp (Preset)",
+      fixed_allowance: "Lương cơ bản (cố định) + Phụ cấp (Preset)",
     };
     setSalaryCalcModal((prev) => ({ ...prev, formula: templates[tpl] || prev.formula }));
   }
@@ -940,7 +974,7 @@ export default function SalaryManagement() {
           column: salaryCalcModal.colKey,
           targetType: salaryCalcModal.targetType,
           targetId: salaryCalcModal.targetId || null,
-          formula: isNet ? null : salaryCalcModal.formula,
+          formula: isNet ? null : getFormulaTranslators().viToEn(salaryCalcModal.formula),
           deductionConfig: isNet ? salaryCalcModal.deductionConfig : null,
         }),
       });
@@ -1006,7 +1040,16 @@ export default function SalaryManagement() {
       if (res.ok) {
         const data = await res.json();
         if (data.columns?.length) {
-          setTableColumns(data.columns);
+          const merged = [...DEFAULT_COLUMNS];
+          data.columns.forEach((dbCol: any) => {
+            const idx = merged.findIndex(c => c.key === dbCol.key);
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], visible: dbCol.visible };
+            } else {
+              merged.push(dbCol);
+            }
+          });
+          setTableColumns(merged);
           return;
         }
       }
@@ -2310,10 +2353,10 @@ export default function SalaryManagement() {
                             employee_name: 1, department: 2, preset: 3, base_salary: 4,
                             total_working_hours: 5, effective_hours: 6, present_days: 7, ot: 8,
                             allowances: 9, deductions: 10, late_penalty: 11, rule_details: 12,
-                            gross_salary: 13, net_salary: 14
+                            gross_salary: 998, net_salary: 999
                           };
-                          const rankA = orderMap[a.key] || (a.key.startsWith("custom_") ? 100 : 99);
-                          const rankB = orderMap[b.key] || (b.key.startsWith("custom_") ? 100 : 99);
+                          const rankA = orderMap[a.key] || (a.key.startsWith("custom_") ? 900 : 99);
+                          const rankB = orderMap[b.key] || (b.key.startsWith("custom_") ? 900 : 99);
                           if (rankA !== rankB) return rankA - rankB;
                           // If both are custom_, maintain their relative array order
                           return tableColumns.indexOf(a) - tableColumns.indexOf(b);
@@ -4548,7 +4591,7 @@ export default function SalaryManagement() {
                               formula:
                                 prev.formula +
                                 (prev.formula ? " " : "") +
-                                b.id,
+                                (b.id.startsWith("custom_") ? b.id : b.label),
                             }))
                           }
                           className="px-2 py-1 text-[11px] font-mono bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors cursor-pointer"
@@ -4576,29 +4619,73 @@ export default function SalaryManagement() {
                         </button>
                       ))}
                     </div>
-                  </div>
-                  {/* Quick templates */}
-                  <div className="mt-3">
-                    <p className="text-xs font-semibold text-gray-600 mb-1.5">
-                      Mẫu công thức nhanh:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {[
-                        { key: "hourly_ot", label: "Theo giờ + OT" },
-                        { key: "daily", label: "Theo ngày công" },
-                        { key: "fixed_allowance", label: "Cố định + phụ cấp" },
-                      ].map((t) => (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {customVars.map((v) => (
                         <button
-                          key={t.key}
+                          key={v.id}
                           type="button"
-                          onClick={() => applyQuickTemplate(t.key)}
-                          className="px-3 py-1.5 text-xs font-medium bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 hover:border-emerald-400 text-emerald-700 cursor-pointer transition-colors"
+                          onClick={() =>
+                            setSalaryCalcModal((prev) => ({
+                              ...prev,
+                              formula:
+                                prev.formula +
+                                (prev.formula ? " " : "") +
+                                v.label,
+                            }))
+                          }
+                          className="px-2 py-1 text-[11px] font-mono bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 hover:border-indigo-400 text-indigo-700 transition-colors cursor-pointer"
+                          title={`${v.id} — ${v.desc}`}
                         >
-                          {t.label}
+                          {v.label}
                         </button>
                       ))}
                     </div>
+                    {/* Add custom variable inline form */}
+                    <div className="mt-4 border-t border-gray-200 pt-3">
+                      <p className="text-[11px] font-semibold text-indigo-700 mb-2">Tạo biến tùy chỉnh (thuế, phí,...)</p>
+                      <div className="flex items-end gap-2 flex-wrap">
+                        <div>
+                          <label className="text-[10px] text-gray-500 block">Tên biến *</label>
+                          <input type="text" placeholder="VD: thuế, thưởng..." value={newVarForm.label} onChange={(e) => setNewVarForm({ ...newVarForm, label: e.target.value })} className="border border-gray-200 rounded-lg px-2 py-1 text-xs w-32 focus:ring-2 focus:ring-indigo-500 outline-none" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500 block">Giá trị *</label>
+                          <input type="text" placeholder="VD: 0.02 hoặc 500000" value={newVarForm.value} onChange={(e) => setNewVarForm({ ...newVarForm, value: e.target.value })} className="border border-gray-200 rounded-lg px-2 py-1 text-xs w-36 focus:ring-2 focus:ring-indigo-500 outline-none" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500 block">Mô tả</label>
+                          <input type="text" placeholder="Mô tả..." value={newVarForm.desc} onChange={(e) => setNewVarForm({ ...newVarForm, desc: e.target.value })} className="border border-gray-200 rounded-lg px-2 py-1 text-xs w-40 focus:ring-2 focus:ring-indigo-500 outline-none" />
+                        </div>
+                        <button type="button" onClick={() => saveCustomVar()} disabled={savingNewVar} className="px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                          {savingNewVar ? "..." : "Thêm"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
+                  {/* Quick templates */}
+                  {["gross_salary", "net_salary"].includes(salaryCalcModal.colKey) && (
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold text-gray-600 mb-1.5">
+                        Mẫu công thức nhanh:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { key: "hourly_ot", label: "Theo giờ + OT" },
+                          { key: "daily", label: "Theo ngày công" },
+                          { key: "fixed_allowance", label: "Cố định + phụ cấp" },
+                        ].map((t) => (
+                          <button
+                            key={t.key}
+                            type="button"
+                            onClick={() => applyQuickTemplate(t.key)}
+                            className="px-3 py-1.5 text-xs font-medium bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 hover:border-emerald-400 text-emerald-700 cursor-pointer transition-colors"
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
