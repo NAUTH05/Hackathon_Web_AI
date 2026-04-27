@@ -1296,8 +1296,7 @@ router.put('/records/:id/adjust-ot', authenticate, requireSalaryRole, async (req
 router.get('/table-config', authenticate, async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT columns FROM payroll_table_config WHERE user_id = ?',
-      [req.user.id]
+      "SELECT columns FROM payroll_table_config WHERE user_id = 'global'"
     );
     if (rows.length > 0) {
       res.json({ columns: JSON.parse(rows[0].columns) });
@@ -1316,9 +1315,9 @@ router.put('/table-config', authenticate, async (req, res) => {
     if (!Array.isArray(columns)) return res.status(400).json({ error: 'columns phải là array' });
     const colJson = JSON.stringify(columns);
     await pool.execute(
-      `INSERT INTO payroll_table_config (user_id, columns) VALUES (?, ?)
+      `INSERT INTO payroll_table_config (user_id, columns) VALUES ('global', ?)
        ON DUPLICATE KEY UPDATE columns = VALUES(columns)`,
-      [req.user.id, colJson]
+      [colJson]
     );
     res.json({ success: true });
   } catch (err) {
@@ -1336,17 +1335,11 @@ router.get('/formula-config', authenticate, async (req, res) => {
     if (!column) return res.status(400).json({ error: 'Thiếu column' });
 
     let rows;
-    if (targetType && targetType !== 'all' && targetId) {
-      [rows] = await pool.execute(
-        'SELECT * FROM salary_formula_config WHERE column_key = ? AND target_type = ? AND target_id = ?',
-        [column, targetType, targetId]
-      );
-    } else {
-      [rows] = await pool.execute(
-        'SELECT * FROM salary_formula_config WHERE column_key = ? AND target_type = ? AND target_id IS NULL',
-        [column, targetType || 'all']
-      );
-    }
+    const tid = (targetType && targetType !== 'all' && targetId) ? targetId : '__all__';
+    [rows] = await pool.execute(
+      'SELECT * FROM salary_formula_config WHERE column_key = ? AND target_type = ? AND target_id = ?',
+      [column, targetType || 'all', tid]
+    );
 
     if (rows.length > 0) {
       const row = rows[0];
@@ -1374,7 +1367,7 @@ router.put('/formula-config', authenticate, requireSalaryRole, async (req, res) 
     if (!column) return res.status(400).json({ error: 'Thiếu column' });
 
     const dedCfgStr = deductionConfig ? JSON.stringify(deductionConfig) : null;
-    const tid = (targetType === 'all' || !targetId) ? null : targetId;
+    const tid = (targetType === 'all' || !targetId) ? '__all__' : targetId;
 
     await pool.execute(
       `INSERT INTO salary_formula_config (column_key, target_type, target_id, formula, deduction_config, created_by)

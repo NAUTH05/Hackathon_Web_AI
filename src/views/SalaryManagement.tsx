@@ -731,22 +731,18 @@ export default function SalaryManagement() {
     const colName = newColModal.name.trim();
     if (!colName) return;
     const key = `custom_${Date.now()}`;
-    const idx = ctxMenu.colIndex;
-    const insertIdx = newColModal.position === "left" ? idx : idx + 1;
     const updated = [...tableColumns];
-    updated.forEach((c, i) => {
-      if (i >= insertIdx) c.order = c.order + 1;
-    });
-    updated.splice(insertIdx, 0, {
+    // Always add custom columns at the end (after all built-in columns)
+    const maxOrder = Math.max(...updated.map((c) => c.order), 0);
+    updated.push({
       key,
       label: colName,
       visible: true,
-      order: insertIdx + 1,
+      order: maxOrder + 1,
     });
-    updated.forEach((c, i) => (c.order = i + 1));
     saveTableConfig(updated);
     setNewColModal({ visible: false, position: "right", name: "" });
-    showToast("success", `Đã tạo cột "${colName}" (giá trị mặc định: 0)`);
+    showToast("success", `Đã tạo cột "${colName}"`);
   }
 
   function deleteColumn() {
@@ -2307,8 +2303,21 @@ export default function SalaryManagement() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200">
-                      {tableColumns
+                      {[...tableColumns]
                         .filter((col) => col.visible)
+                        .sort((a, b) => {
+                          const orderMap: Record<string, number> = {
+                            employee_name: 1, department: 2, preset: 3, base_salary: 4,
+                            total_working_hours: 5, effective_hours: 6, present_days: 7, ot: 8,
+                            allowances: 9, deductions: 10, late_penalty: 11, rule_details: 12,
+                            gross_salary: 13, net_salary: 14
+                          };
+                          const rankA = orderMap[a.key] || (a.key.startsWith("custom_") ? 100 : 99);
+                          const rankB = orderMap[b.key] || (b.key.startsWith("custom_") ? 100 : 99);
+                          if (rankA !== rankB) return rankA - rankB;
+                          // If both are custom_, maintain their relative array order
+                          return tableColumns.indexOf(a) - tableColumns.indexOf(b);
+                        })
                         .map((col, idx) => {
                           const sortable = [
                             "employee_name",
@@ -2586,15 +2595,15 @@ export default function SalaryManagement() {
                             {fmt(r.netSalary)}
                           </td>
                         )}
-                        {/* Custom columns — default value 0 */}
+                        {/* Custom columns — default empty */}
                         {tableColumns
                           .filter((col) => col.visible && col.key.startsWith("custom_"))
                           .map((col) => (
                             <td
                               key={col.key}
-                              className="px-3 py-3 text-right text-gray-500"
+                              className="px-3 py-3 text-center text-gray-300 text-xs"
                             >
-                              0đ
+                              —
                             </td>
                           ))}
                       </tr>
@@ -4269,19 +4278,23 @@ export default function SalaryManagement() {
           <div className="px-3 py-1.5 text-[10px] text-gray-400 uppercase tracking-wider font-semibold border-b border-gray-100 mb-1">
             Cột: {ctxMenu.colLabel}
           </div>
-          <button
-            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors"
-            onClick={() => addColumnAt("left")}
-          >
-            <Plus className="w-3.5 h-3.5" /> Tạo cột bên trái
-          </button>
-          <button
-            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors"
-            onClick={() => addColumnAt("right")}
-          >
-            <Plus className="w-3.5 h-3.5" /> Tạo cột bên phải
-          </button>
-          <div className="border-t border-gray-100 my-1" />
+          {!["gross_salary", "net_salary"].includes(ctxMenu.colKey) && (
+            <>
+              <button
+                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors"
+                onClick={() => addColumnAt("left")}
+              >
+                <Plus className="w-3.5 h-3.5" /> Tạo cột bên trái
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 flex items-center gap-2 transition-colors"
+                onClick={() => addColumnAt("right")}
+              >
+                <Plus className="w-3.5 h-3.5" /> Tạo cột bên phải
+              </button>
+              <div className="border-t border-gray-100 my-1" />
+            </>
+          )}
           {!NON_EDITABLE_COLS.includes(ctxMenu.colKey) && (
             <>
               <button
