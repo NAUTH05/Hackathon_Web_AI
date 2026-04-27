@@ -852,10 +852,29 @@ export default function SalaryManagement() {
       });
       if (res.ok) {
         const data = await res.json();
+        let formula = "";
         if (data.customFormula?.customExpression) {
+          formula = data.customFormula.customExpression;
+        } else if (data.customFormula) {
+          const cfg = data.customFormula;
+          if (cfg.salaryBasis === "daily") {
+            formula = "daily_rate * present_days";
+          } else if (cfg.salaryBasis === "fixed") {
+            formula = "base_salary";
+          } else {
+            formula = "working_hours * hourly_rate";
+          }
+          if (cfg.includeOT !== false) {
+            formula += " + ot_hours * hourly_rate * ot_multiplier";
+          }
+          if (cfg.includeAllowances !== false) {
+            formula += " + allowances";
+          }
+        }
+        if (formula) {
           setSalaryCalcModal((prev) => ({
             ...prev,
-            formula: data.customFormula.customExpression,
+            formula,
           }));
         }
       }
@@ -2567,6 +2586,17 @@ export default function SalaryManagement() {
                             {fmt(r.netSalary)}
                           </td>
                         )}
+                        {/* Custom columns — default value 0 */}
+                        {tableColumns
+                          .filter((col) => col.visible && col.key.startsWith("custom_"))
+                          .map((col) => (
+                            <td
+                              key={col.key}
+                              className="px-3 py-3 text-right text-gray-500"
+                            >
+                              0đ
+                            </td>
+                          ))}
                       </tr>
                     ))}
                   </tbody>
@@ -2590,6 +2620,11 @@ export default function SalaryManagement() {
                               {fmt(totalNet)}
                             </td>
                           )}
+                          {tableColumns
+                            .filter((col) => col.visible && col.key.startsWith("custom_"))
+                            .map((col) => (
+                              <td key={col.key} className="px-3 py-3" />
+                            ))}
                         </tr>
                       </tfoot>
                     )}
@@ -4504,9 +4539,9 @@ export default function SalaryManagement() {
                             }))
                           }
                           className="px-2 py-1 text-[11px] font-mono bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors cursor-pointer"
-                          title={b.desc}
+                          title={`${b.id} — ${b.desc}`}
                         >
-                          {b.id}
+                          {b.label}
                         </button>
                       ))}
                       {["+", "-", "*", "/", "(", ")"].map((op) => (
