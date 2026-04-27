@@ -659,7 +659,6 @@ export default function SalaryManagement() {
     { key: "allowances", label: "Phụ cấp", visible: false, order: 9 },
     { key: "deductions", label: "Khấu trừ", visible: false, order: 10 },
     { key: "late_penalty", label: "Phạt trễ", visible: false, order: 11 },
-    { key: "rule_details", label: "Ràng buộc", visible: false, order: 12 },
     {
       key: "gross_salary",
       label: "Lương trước thuế",
@@ -1056,7 +1055,9 @@ export default function SalaryManagement() {
             if (idx >= 0) {
               finalCols[idx] = { ...finalCols[idx], visible: dbCol.visible };
             } else {
-              finalCols.push(dbCol);
+              if (dbCol.key && dbCol.key.startsWith("custom_")) {
+                finalCols.push(dbCol);
+              }
             }
           });
         }
@@ -2391,7 +2392,7 @@ export default function SalaryManagement() {
                           const orderMap: Record<string, number> = {
                             employee_name: 1, department: 2, preset: 3, base_salary: 4,
                             total_working_hours: 5, effective_hours: 6, present_days: 7, ot: 8,
-                            allowances: 9, deductions: 10, late_penalty: 11, rule_details: 12,
+                            allowances: 9, deductions: 10, late_penalty: 11,
                             gross_salary: 998, net_salary: 999
                           };
                           const rankA = orderMap[a.key] || (a.key.startsWith("custom_") ? 900 : 99);
@@ -2418,14 +2419,12 @@ export default function SalaryManagement() {
                           const isEffective =
                             col.key === "effective_hours";
                           const isNetCol = col.key === "net_salary";
-                          const isRuleCol = col.key === "rule_details";
                           const isOtCol = col.key === "ot";
 
                           let textColor = "text-gray-600";
                           if (isTimeCol) textColor = "text-blue-600";
                           if (isEffective) textColor = "text-cyan-600";
                           if (isNetCol) textColor = "text-emerald-700";
-                          if (isRuleCol) textColor = "text-indigo-600";
 
                           const align = [
                             "base_salary",
@@ -2621,50 +2620,6 @@ export default function SalaryManagement() {
                             ) : (
                               <span className="text-gray-300">0đ</span>
                             )}
-                          </td>
-                        )}
-                        {isColVisible("rule_details") && (
-                          <td className="px-3 py-3 text-left max-w-[200px]">
-                            {(() => {
-                              const rd = r.ruleDetails;
-                              if (!rd)
-                                return (
-                                  <span className="text-gray-300 text-xs">
-                                    —
-                                  </span>
-                                );
-                              try {
-                                const details =
-                                  typeof rd === "string" ? JSON.parse(rd) : rd;
-                                if (
-                                  !Array.isArray(details) ||
-                                  details.length === 0
-                                )
-                                  return (
-                                    <span className="text-gray-300 text-xs">
-                                      —
-                                    </span>
-                                  );
-                                return (
-                                  <div className="space-y-0.5">
-                                    {(details as string[]).map((d, i) => (
-                                      <div
-                                        key={i}
-                                        className="text-[10px] text-indigo-600 leading-tight"
-                                      >
-                                        {d}
-                                      </div>
-                                    ))}
-                                  </div>
-                                );
-                              } catch {
-                                return (
-                                  <span className="text-gray-300 text-xs">
-                                    —
-                                  </span>
-                                );
-                              }
-                            })()}
                           </td>
                         )}
                         {/* Custom columns — evaluated dynamically BEFORE Gross / Net */}
