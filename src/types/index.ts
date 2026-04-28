@@ -56,6 +56,8 @@ export interface AttendanceRecord {
   lateMinutes: number;
   earlyLeaveMinutes: number;
   workingHours: number;
+  overtimeHours?: number;
+  otRequestId?: string;
   note?: string;
 }
 
@@ -64,7 +66,8 @@ export type AttendanceStatus =
   | 'late'
   | 'early-leave'
   | 'absent'
-  | 'pending';
+  | 'pending'
+  | 'ot';
 
 // ==================== OT (Overtime) ====================
 export interface OTRequest {

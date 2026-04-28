@@ -11,8 +11,9 @@ import {
   User,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { FaceEnrollment } from "../components/FaceEnrollment";
 import { useAuth } from "../contexts/AuthContext";
-import { authApi } from "../services/api";
+import { authApi, resolveAvatarUrl, uploadAvatar } from "../services/api";
 import { ROLE_LEVEL_LABELS } from "../types";
 
 interface ProfileData {
@@ -42,7 +43,9 @@ export default function Profile() {
 
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [name, setName] = useState("");
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Change password state
@@ -72,6 +75,7 @@ export default function Profile() {
       setProfile(data);
       setEmail(data.email || "");
       setPhone(data.phone || "");
+      setName(data.name || "");
       setAvatarPreview(data.avatar || null);
     } catch {
       setMessage({ type: "error", text: "Không thể tải thông tin cá nhân" });
@@ -87,22 +91,27 @@ export default function Profile() {
       setMessage({ type: "error", text: "Ảnh quá lớn. Tối đa 2MB." });
       return;
     }
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAvatarPreview(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    setAvatarFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
   }
 
   async function handleSave() {
     setSaving(true);
     setMessage(null);
     try {
-      const updates: { avatar?: string; email?: string; phone?: string } = {};
-      if (avatarPreview !== (profile?.avatar || null))
-        updates.avatar = avatarPreview || "";
+      const updates: {
+        avatar?: string;
+        email?: string;
+        phone?: string;
+        name?: string;
+      } = {};
+      if (avatarFile) {
+        const url = await uploadAvatar(avatarFile);
+        updates.avatar = url;
+      }
       if (email !== (profile?.email || "")) updates.email = email;
       if (phone !== (profile?.phone || "")) updates.phone = phone;
+      if (name.trim() !== (profile?.name || "")) updates.name = name.trim();
 
       if (Object.keys(updates).length === 0) {
         setMessage({ type: "success", text: "Không có thay đổi nào." });
@@ -114,8 +123,11 @@ export default function Profile() {
         updates,
       )) as unknown as ProfileData;
       setProfile(data);
-      // Update auth context so sidebar avatar updates instantly
-      updateUser({ avatar: data.avatar });
+      setName(data.name || "");
+      setAvatarFile(null);
+      setAvatarPreview(data.avatar || null);
+      // Update auth context so sidebar avatar/name updates instantly
+      updateUser({ avatar: data.avatar, name: data.name });
       // If username changed (email prefix), notify user
       if (data.username !== profile?.username) {
         setMessage({
@@ -201,7 +213,7 @@ export default function Profile() {
                 <div className="w-20 h-20 rounded-full bg-white/20 border-2 border-white overflow-hidden flex items-center justify-center">
                   {avatarPreview ? (
                     <img
-                      src={avatarPreview}
+                      src={resolveAvatarUrl(avatarPreview) ?? ""}
                       alt="Avatar"
                       className="w-full h-full object-cover"
                     />
@@ -247,6 +259,30 @@ export default function Profile() {
               <InfoField label="Tên đăng nhập" value={profile.username} />
               <InfoField label="Phòng ban" value={profile.department || "—"} />
               <InfoField label="Chức vụ" value={profile.position || "—"} />
+            </div>
+
+            <hr className="border-gray-100" />
+
+            {/* Editable fields */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-gray-700">
+                Thông tin cá nhân
+              </h3>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">
+                  Họ và tên
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Nguyễn Văn A"
+                    className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
             </div>
 
             <hr className="border-gray-100" />
@@ -321,8 +357,13 @@ export default function Profile() {
           </div>
         </div>
 
+        {/* Face Enrollment */}
+        {profile.employeeId && (
+          <FaceEnrollment employeeId={profile.employeeId} />
+        )}
+
         {/* Change password section */}
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mt-6">
           <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
             <Lock className="w-4 h-4 text-gray-500" />
             <h3 className="text-sm font-semibold text-gray-700">

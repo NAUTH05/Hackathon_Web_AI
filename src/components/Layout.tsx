@@ -28,6 +28,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { resolveAvatarUrl } from "../services/api";
 import { ROLE_LEVELS, ROLE_LEVEL_LABELS } from "../types";
 
 interface NavItem {
@@ -130,7 +131,6 @@ const allNavSections: NavSection[] = [
         to: "/penalties",
         label: "Vi phạm & Cảnh báo",
         icon: <AlertTriangle className={iconSize} />,
-        maxLevel: ROLE_LEVELS.MANAGER,
       },
       {
         to: "/leave",
@@ -309,7 +309,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
                 {user?.avatar ? (
                   <img
-                    src={user.avatar}
+                    src={resolveAvatarUrl(user.avatar) ?? ""}
                     alt="Avatar"
                     className="w-full h-full object-cover"
                   />
@@ -348,7 +348,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             >
               {user?.avatar ? (
                 <img
-                  src={user.avatar}
+                  src={resolveAvatarUrl(user.avatar) ?? ""}
                   alt="Avatar"
                   className="w-full h-full object-cover"
                 />
@@ -391,7 +391,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden">
             {user?.avatar ? (
               <img
-                src={user.avatar}
+                src={resolveAvatarUrl(user.avatar) ?? ""}
                 alt=""
                 className="w-full h-full object-cover"
               />

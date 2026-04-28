@@ -129,19 +129,27 @@ export default function OvertimeManagement() {
 
     const hours = calcOTHours();
 
-    await addOTRequest({
-      employeeId: form.employeeId,
-      employeeName: empName,
-      date: form.date,
-      shiftId: form.shiftId,
-      startTime: form.startTime,
-      endTime: form.endTime,
-      hours: Math.max(0, hours),
-      multiplier: form.multiplier,
-      reason: form.reason,
-      status: "pending",
-    });
+    try {
+      await addOTRequest({
+        employeeId: form.employeeId,
+        employeeName: empName,
+        date: form.date,
+        shiftId: form.shiftId,
+        startTime: form.startTime,
+        endTime: form.endTime,
+        hours: Math.max(0, hours),
+        multiplier: form.multiplier,
+        reason: form.reason,
+        status: "pending",
+      });
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : "Không thể đăng ký OT";
+      showToast("error", "Đăng ký OT thất bại", message);
+      return;
+    }
 
+    showToast("success", "Thành công", "Yêu cầu OT đã được gửi.");
     await loadRequests();
     setShowForm(false);
     setForm({

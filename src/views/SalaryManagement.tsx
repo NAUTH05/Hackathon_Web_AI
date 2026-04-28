@@ -19,6 +19,9 @@ import {
   X,
 } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+
+// Ref for formula textarea cursor-position insert
+let _formulaTextareaRef: HTMLTextAreaElement | null = null;
 import Pagination from "../components/Pagination";
 import { showToast } from "../components/Toast";
 import { useAuth } from "../contexts/AuthContext";
@@ -668,6 +671,18 @@ export default function SalaryManagement() {
     { key: "net_salary", label: "Lương ròng", visible: true, order: 14 },
   ];
 
+  // Custom columns as formula variables (must be after tableColumns declaration)
+  const customColBlocks = tableColumns
+    .filter((c) => c.key.startsWith("custom_") && c.visible)
+    .map((c) => ({
+      id: c.key,
+      label: c.label,
+      color: "pink" as const,
+      desc: customFormulas[c.key]
+        ? `Cột tùy chỉnh — công thức: ${customFormulas[c.key]}`
+        : "Cột tùy chỉnh (chưa có công thức)",
+    }));
+
   // OT adjustment popup
   const [otPopupRecord, setOtPopupRecord] = useState<SalaryRecord | null>(null);
   const [otPopupForm, setOtPopupForm] = useState({
@@ -904,7 +919,7 @@ export default function SalaryManagement() {
   }
 
   function getFormulaTranslators() {
-    const items = [...BUILTIN_BLOCKS, ...customVars].sort((a,b) => b.label.length - a.label.length);
+    const items = [...BUILTIN_BLOCKS, ...customVars, ...customColBlocks].sort((a,b) => b.label.length - a.label.length);
     const enToVi = (f: string) => {
       let r = f || "";
       items.forEach(i => { r = r.split(i.id).join(i.label); });
@@ -945,22 +960,70 @@ export default function SalaryManagement() {
     }));
   }
 
+  // Inline form state for adding custom deduction (replaces prompt)
+  const [showNewDeductionInline, setShowNewDeductionInline] = useState(false);
+  const [newDeductionInlineForm, setNewDeductionInlineForm] = useState({
+    name: "",
+    calc_type: "percentage" as "percentage" | "fixed",
+    rate: 0,
+    amount: 0,
+  });
+
   function addCustomDeduction() {
-    const name = prompt("Tên khoản trừ mới:");
-    if (!name?.trim()) return;
+    setShowNewDeductionInline(true);
+    setNewDeductionInlineForm({ name: "", calc_type: "percentage", rate: 0, amount: 0 });
+  }
+
+  function confirmAddCustomDeduction() {
+    const name = newDeductionInlineForm.name.trim();
+    if (!name) {
+      showToast("warning", "Thiếu tên", "Vui lòng nhập tên khoản trừ.");
+      return;
+    }
     const newItem = {
       id: `ded_custom_${Date.now()}`,
-      name: name.trim(),
+      name,
       type: "custom",
-      calc_type: "fixed" as const,
-      rate: 0,
-      amount: 0,
+      calc_type: newDeductionInlineForm.calc_type,
+      rate: newDeductionInlineForm.calc_type === "percentage" ? newDeductionInlineForm.rate / 100 : 0,
+      amount: newDeductionInlineForm.calc_type === "fixed" ? newDeductionInlineForm.amount : 0,
       enabled: true,
     };
     setSalaryCalcModal((prev) => ({
       ...prev,
       deductionConfig: [...prev.deductionConfig, newItem],
     }));
+    setShowNewDeductionInline(false);
+    showToast("success", "Đã thêm", `Khoản trừ "${name}" đã được thêm.`);
+  }
+
+  // Insert text at cursor position in formula textarea
+  function insertAtCursor(text: string) {
+    const ta = _formulaTextareaRef;
+    if (!ta) {
+      // fallback: append
+      setSalaryCalcModal((prev) => ({
+        ...prev,
+        formula: prev.formula + (prev.formula ? " " : "") + text,
+      }));
+      return;
+    }
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const before = ta.value.substring(0, start);
+    const after = ta.value.substring(end);
+    const spaceBefore = before.length > 0 && !before.endsWith(" ") && !before.endsWith("(") ? " " : "";
+    const spaceAfter = after.length > 0 && !after.startsWith(" ") && !after.startsWith(")") ? " " : "";
+    const newFormula = before + spaceBefore + text + spaceAfter + after;
+    const cursorPos = (before + spaceBefore + text).length;
+    setSalaryCalcModal((prev) => ({ ...prev, formula: newFormula }));
+    // Restore cursor position after React re-render
+    setTimeout(() => {
+      if (_formulaTextareaRef) {
+        _formulaTextareaRef.focus();
+        _formulaTextareaRef.setSelectionRange(cursorPos, cursorPos);
+      }
+    }, 0);
   }
 
   async function saveSalaryFormula() {
@@ -4584,6 +4647,7 @@ export default function SalaryManagement() {
                     Công thức tính
                   </label>
                   <textarea
+                    ref={(el) => { _formulaTextareaRef = el; }}
                     value={salaryCalcModal.formula}
                     onChange={(e) =>
                       setSalaryCalcModal((prev) => ({
@@ -4592,7 +4656,7 @@ export default function SalaryManagement() {
                       }))
                     }
                     className="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 min-h-[100px] resize-y"
-                    placeholder="VD: base_salary * present_days / work_days_standard + ot_hours * hourly_rate * ot_multiplier"
+                    placeholder="Click vào biến bên dưới để chèn vào công thức..."
                   />
                   <div className="mt-2 bg-gray-50 rounded-lg p-3 border border-gray-100">
                     <p className="text-xs font-semibold text-gray-600 mb-1.5">
@@ -4603,15 +4667,7 @@ export default function SalaryManagement() {
                         <button
                           key={b.id}
                           type="button"
-                          onClick={() =>
-                            setSalaryCalcModal((prev) => ({
-                              ...prev,
-                              formula:
-                                prev.formula +
-                                (prev.formula ? " " : "") +
-                                (b.id.startsWith("custom_") ? b.id : b.label),
-                            }))
-                          }
+                          onClick={() => insertAtCursor(b.label)}
                           className="px-2 py-1 text-[11px] font-mono bg-white border border-gray-200 rounded-md hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition-colors cursor-pointer"
                           title={`${b.id} — ${b.desc}`}
                         >
@@ -4622,35 +4678,36 @@ export default function SalaryManagement() {
                         <button
                           key={op}
                           type="button"
-                          onClick={() =>
-                            setSalaryCalcModal((prev) => ({
-                              ...prev,
-                              formula:
-                                prev.formula +
-                                (prev.formula ? " " : "") +
-                                op,
-                            }))
-                          }
+                          onClick={() => insertAtCursor(op)}
                           className="px-2.5 py-1 text-[11px] font-bold bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 hover:border-amber-400 text-amber-700 cursor-pointer transition-colors"
                         >
                           {op}
                         </button>
                       ))}
                     </div>
+                    {/* Custom columns as variables */}
+                    {customColBlocks.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        <span className="text-[10px] text-pink-600 font-semibold self-center mr-1">Đang có:</span>
+                        {customColBlocks.map((v) => (
+                          <button
+                            key={v.id}
+                            type="button"
+                            onClick={() => insertAtCursor(v.label)}
+                            className="px-2 py-1 text-[11px] font-mono bg-pink-50 border border-pink-200 rounded-md hover:bg-pink-100 hover:border-pink-400 text-pink-700 transition-colors cursor-pointer"
+                            title={v.desc}
+                          >
+                            {v.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {customVars.map((v) => (
                         <button
                           key={v.id}
                           type="button"
-                          onClick={() =>
-                            setSalaryCalcModal((prev) => ({
-                              ...prev,
-                              formula:
-                                prev.formula +
-                                (prev.formula ? " " : "") +
-                                v.label,
-                            }))
-                          }
+                          onClick={() => insertAtCursor(v.label)}
                           className="px-2 py-1 text-[11px] font-mono bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 hover:border-indigo-400 text-indigo-700 transition-colors cursor-pointer"
                           title={`${v.id} — ${v.desc}`}
                         >
@@ -4791,14 +4848,79 @@ export default function SalaryManagement() {
                       </div>
                     ))}
                   </div>
-                  {/* Add custom deduction */}
-                  <button
-                    type="button"
-                    onClick={addCustomDeduction}
-                    className="mt-3 flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Thêm khoản trừ mới
-                  </button>
+                  {/* Add custom deduction — inline form */}
+                  {!showNewDeductionInline ? (
+                    <button
+                      type="button"
+                      onClick={addCustomDeduction}
+                      className="mt-3 flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Thêm khoản trừ mới
+                    </button>
+                  ) : (
+                    <div className="mt-3 p-4 border-2 border-dashed border-indigo-200 rounded-xl bg-gradient-to-br from-indigo-50/50 to-white space-y-3">
+                      <p className="text-xs font-bold text-indigo-700 flex items-center gap-1.5">
+                        <Plus className="w-3.5 h-3.5" /> Thêm khoản khấu trừ mới
+                      </p>
+                      <div>
+                        <label className="text-[10px] text-gray-500 block mb-0.5">Tên khoản trừ *</label>
+                        <input
+                          type="text"
+                          placeholder="VD: Thuế TNCN, BHXH bổ sung..."
+                          value={newDeductionInlineForm.name}
+                          onChange={(e) => setNewDeductionInlineForm((f) => ({ ...f, name: e.target.value }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="flex items-end gap-3">
+                        <div>
+                          <label className="text-[10px] text-gray-500 block mb-0.5">Loại tính</label>
+                          <select
+                            value={newDeductionInlineForm.calc_type}
+                            onChange={(e) => setNewDeductionInlineForm((f) => ({ ...f, calc_type: e.target.value as any }))}
+                            className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs bg-white"
+                          >
+                            <option value="percentage">% gross</option>
+                            <option value="fixed">Cố định (đ)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-500 block mb-0.5">
+                            {newDeductionInlineForm.calc_type === "percentage" ? "Tỷ lệ (%)" : "Số tiền (đ)"}
+                          </label>
+                          <input
+                            type="number"
+                            step={newDeductionInlineForm.calc_type === "percentage" ? "0.1" : "10000"}
+                            value={newDeductionInlineForm.calc_type === "percentage" ? newDeductionInlineForm.rate : newDeductionInlineForm.amount}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0;
+                              setNewDeductionInlineForm((f) =>
+                                f.calc_type === "percentage" ? { ...f, rate: val } : { ...f, amount: val }
+                              );
+                            }}
+                            className="w-28 border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-right"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowNewDeductionInline(false)}
+                          className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={confirmAddCustomDeduction}
+                          className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+                        >
+                          Thêm khoản trừ
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

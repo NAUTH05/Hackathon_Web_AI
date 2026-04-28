@@ -378,7 +378,7 @@ export default function PenaltyManagement() {
                 </select>
               </div>
               <div className="flex items-center gap-2">
-                {filterStatus !== "resolved" && total > 0 && (
+                {filterStatus !== "resolved" && totalActive > 0 && (
                   <button
                     onClick={() => setConfirmResolveAll(true)}
                     disabled={resolvingAll}
@@ -386,7 +386,7 @@ export default function PenaltyManagement() {
                   >
                     {resolvingAll
                       ? "Đang xử lý..."
-                      : `Giải quyết tất cả (${total.toLocaleString()})`}
+                      : `Giải quyết tất cả (${totalActive.toLocaleString()})`}
                   </button>
                 )}
                 {isAdmin && (

@@ -538,9 +538,10 @@ router.delete('/:id', authenticate, async (req, res) => {
 // POST /api/attendance/check-in
 router.post('/check-in', authenticate, async (req, res) => {
   try {
-    // Block PC/Laptop — only allow mobile devices
+    // Block PC/Laptop — only allow mobile devices (except admin/manager who can manage on behalf)
     const userAgent = req.headers['user-agent'] || '';
-    if (!isMobileDevice(userAgent)) {
+    const isManagerOrAdmin = req.user.role === 'admin' || (req.user.roleLevel && req.user.roleLevel <= 3);
+    if (!isMobileDevice(userAgent) && !isManagerOrAdmin) {
       return res.status(403).json({ error: 'Chỉ cho phép chấm công từ điện thoại di động. Vui lòng sử dụng điện thoại để chấm công.' });
     }
 
@@ -690,9 +691,10 @@ router.post('/check-in', authenticate, async (req, res) => {
 // POST /api/attendance/check-out
 router.post('/check-out', authenticate, async (req, res) => {
   try {
-    // Block PC/Laptop — only allow mobile devices
+    // Block PC/Laptop — only allow mobile devices (except admin/manager who can manage on behalf)
     const userAgent = req.headers['user-agent'] || '';
-    if (!isMobileDevice(userAgent)) {
+    const isManagerOrAdmin = req.user.role === 'admin' || (req.user.roleLevel && req.user.roleLevel <= 3);
+    if (!isMobileDevice(userAgent) && !isManagerOrAdmin) {
       return res.status(403).json({ error: 'Chỉ cho phép chấm công từ điện thoại di động. Vui lòng sử dụng điện thoại để chấm công.' });
     }
 
@@ -789,6 +791,144 @@ router.post('/check-out', authenticate, async (req, res) => {
     res.json(toCamelCase(rows[0]));
   } catch (err) {
     console.error('Check-out error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// POST /api/attendance/check-in-ot — check-in for approved overtime request
+router.post('/check-in-ot', authenticate, async (req, res) => {
+  try {
+    const userAgent = req.headers['user-agent'] || '';
+    const isManagerOrAdmin = req.user.role === 'admin' || (req.user.roleLevel && req.user.roleLevel <= 3);
+    if (!isMobileDevice(userAgent) && !isManagerOrAdmin) {
+      return res.status(403).json({ error: 'Chỉ cho phép chấm công OT từ điện thoại di động.' });
+    }
+
+    const { employeeId, otRequestId, checkInImage } = req.body;
+    const empId = employeeId || req.user.employeeId;
+    const vn = getVietnamNow();
+    const today = vn.today;
+
+    // Verify there's an approved OT request for this employee today
+    let otRow;
+    if (otRequestId) {
+      const [rows] = await pool.execute(
+        `SELECT * FROM ot_requests WHERE id = ? AND employee_id = ? AND status = 'approved' AND date = ?`,
+        [otRequestId, empId, today]
+      );
+      if (rows.length === 0) return res.status(400).json({ error: 'Không tìm thấy yêu cầu OT đã duyệt cho hôm nay' });
+      otRow = rows[0];
+    } else {
+      // Find any approved OT for today where current time is within the OT window (±30 min)
+      const [rows] = await pool.execute(
+        `SELECT * FROM ot_requests WHERE employee_id = ? AND status = 'approved' AND date = ?`,
+        [empId, today]
+      );
+      const nowMin = vn.dateObj.getHours() * 60 + vn.dateObj.getMinutes();
+      otRow = rows.find(r => {
+        const [sh, sm] = String(r.start_time).split(':').map(Number);
+        const otStart = sh * 60 + sm;
+        return nowMin >= otStart - 30 && nowMin <= otStart + 60;
+      });
+      if (!otRow) return res.status(400).json({ error: 'Không có ca OT nào phù hợp với thời điểm hiện tại' });
+    }
+
+    // Check if already checked in for this OT request
+    const [existing] = await pool.execute(
+      `SELECT id FROM attendance_records WHERE employee_id = ? AND date = ? AND ot_request_id = ?`,
+      [empId, today, otRow.id]
+    );
+    if (existing.length > 0) return res.status(400).json({ error: 'Đã chấm công vào ca OT này rồi' });
+
+    const id = uuidv4();
+    const checkInTimeStr = `${today} ${vn.timeStr}`;
+
+    const [empNameRows] = await pool.execute('SELECT name FROM employees WHERE id = ?', [empId]);
+    const empName = empNameRows[0]?.name || empId;
+
+    await pool.execute(
+      `INSERT INTO attendance_records (id, employee_id, employee_name, date, check_in_time, check_in_image, status, ot_request_id, note)
+       VALUES (?, ?, ?, ?, ?, ?, 'ot', ?, ?)`,
+      [id, empId, empName, today, checkInTimeStr, checkInImage || null, otRow.id,
+        `OT: ${otRow.start_time} - ${otRow.end_time}`]
+    );
+
+    const [newRows] = await pool.execute('SELECT * FROM attendance_records WHERE id = ?', [id]);
+
+    await logAudit({
+      action: 'check-in-ot',
+      performedBy: empName,
+      targetEmployee: empName,
+      details: `Check-in OT lúc ${vn.timeStr} cho ca ${otRow.start_time} - ${otRow.end_time}`,
+    });
+
+    res.status(201).json(toCamelCase(newRows[0]));
+  } catch (err) {
+    console.error('Check-in OT error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// POST /api/attendance/check-out-ot — check-out for overtime record
+router.post('/check-out-ot', authenticate, async (req, res) => {
+  try {
+    const userAgent = req.headers['user-agent'] || '';
+    const isManagerOrAdmin = req.user.role === 'admin' || (req.user.roleLevel && req.user.roleLevel <= 3);
+    if (!isMobileDevice(userAgent) && !isManagerOrAdmin) {
+      return res.status(403).json({ error: 'Chỉ cho phép chấm công OT từ điện thoại di động.' });
+    }
+
+    const { employeeId, otRequestId, checkOutImage } = req.body;
+    const empId = employeeId || req.user.employeeId;
+    const vn = getVietnamNow();
+    const today = vn.today;
+
+    // Find the open OT check-in record
+    let query = `SELECT * FROM attendance_records WHERE employee_id = ? AND date = ? AND status = 'ot' AND check_out_time IS NULL`;
+    const params = [empId, today];
+    if (otRequestId) {
+      query += ' AND ot_request_id = ?';
+      params.push(otRequestId);
+    }
+    query += ' LIMIT 1';
+
+    const [rows] = await pool.execute(query, params);
+    if (rows.length === 0) return res.status(400).json({ error: 'Không tìm thấy bản ghi check-in OT' });
+
+    const record = rows[0];
+
+    // Calculate OT hours worked
+    const checkInStr = String(record.check_in_time);
+    const timePart = checkInStr.includes('T') ? checkInStr.split('T')[1] : checkInStr.split(' ')[1] || checkInStr;
+    const [inH, inM] = timePart.split(':').map(Number);
+    const outH = vn.dateObj.getHours();
+    const outM = vn.dateObj.getMinutes();
+    let otHours = ((outH * 60 + outM) - (inH * 60 + inM)) / 60;
+    if (otHours < 0) otHours += 24;
+    otHours = Math.round(otHours * 100) / 100;
+
+    const checkOutTimeStr = `${today} ${vn.timeStr}`;
+    await pool.execute(
+      `UPDATE attendance_records SET check_out_time = ?, check_out_image = ?, overtime_hours = ?, working_hours = ?
+       WHERE id = ?`,
+      [checkOutTimeStr, checkOutImage || null, otHours, otHours, record.id]
+    );
+
+    const [updatedRows] = await pool.execute('SELECT * FROM attendance_records WHERE id = ?', [record.id]);
+
+    const [empNameRows] = await pool.execute('SELECT name FROM employees WHERE id = ?', [empId]);
+    const empName = empNameRows[0]?.name || empId;
+
+    await logAudit({
+      action: 'check-out-ot',
+      performedBy: empName,
+      targetEmployee: empName,
+      details: `Check-out OT lúc ${vn.timeStr} - Làm thêm ${otHours}h`,
+    });
+
+    res.json(toCamelCase(updatedRows[0]));
+  } catch (err) {
+    console.error('Check-out OT error:', err);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });

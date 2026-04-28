@@ -1,5 +1,7 @@
 const pool = require('./config/db');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
 
 async function logAudit({ action, performedBy, targetEmployee, details, oldValue, newValue }) {
   try {
@@ -49,4 +51,26 @@ function haversineDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-module.exports = { logAudit, toCamelCase, toCamelCaseArray, haversineDistance };
+/**
+ * Xoá file avatar cũ trên disk nếu là file upload local.
+ * Bỏ qua nếu URL là null/undefined, data URI, hay URL ngoài.
+ * @param {string|null|undefined} url  - URL avatar cũ đang lưu trong DB
+ */
+function deleteAvatarFile(url) {
+  if (!url || url.startsWith('data:')) return;
+  // Chỉ xoá file có path /uploads/avatars/ (file local của backend)
+  const match = url.match(/\/uploads\/avatars\/([^?#]+)$/);
+  if (!match) return;
+  const filename = match[1];
+  // Bảo vệ path traversal
+  if (filename.includes('..') || filename.includes('/')) return;
+  const filePath = path.join(__dirname, '..', 'uploads', 'avatars', filename);
+  fs.unlink(filePath, (err) => {
+    if (err && err.code !== 'ENOENT') {
+      console.error('deleteAvatarFile error:', err.message);
+    }
+  });
+}
+
+module.exports = { logAudit, toCamelCase, toCamelCaseArray, haversineDistance, deleteAvatarFile };
+
