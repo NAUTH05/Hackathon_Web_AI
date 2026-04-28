@@ -47,6 +47,19 @@ export async function detectFace(
   return detection || null;
 }
 
+export async function detectMultipleFaces(
+  input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement
+): Promise<faceapi.WithFaceDescriptor<faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }>>[]> {
+  if (!modelsLoaded) await loadModels();
+
+  const detections = await faceapi
+    .detectAllFaces(input, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+    .withFaceLandmarks()
+    .withFaceDescriptors();
+
+  return detections;
+}
+
 export async function getFaceDescriptor(
   input: HTMLVideoElement | HTMLCanvasElement | HTMLImageElement
 ): Promise<Float32Array | null> {

@@ -16,6 +16,7 @@ import { employeesApi } from "../services/api";
 import {
   captureSnapshot,
   detectFace,
+  detectMultipleFaces,
   loadModels,
 } from "../services/faceRecognition";
 
@@ -133,8 +134,8 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
     });
 
     try {
-      const detection = await detectFace(videoRef.current);
-      if (!detection) {
+      const detections = await detectMultipleFaces(videoRef.current);
+      if (!detections || detections.length === 0) {
         setResult({
           status: "error",
           message:
@@ -143,7 +144,18 @@ export function FaceEnrollment({ employeeId, onSuccess }: FaceEnrollmentProps) {
         setDetecting(false);
         return;
       }
+      
+      if (detections.length > 1) {
+        setResult({
+          status: "error",
+          message:
+            "Phát hiện nhiều hơn 1 khuôn mặt trong ảnh. Vui lòng chỉ đứng một mình trước camera.",
+        });
+        setDetecting(false);
+        return;
+      }
 
+      const detection = detections[0];
       const snapshot = captureSnapshot(videoRef.current);
       const faceDescriptor = Array.from(detection.descriptor) as number[];
 
