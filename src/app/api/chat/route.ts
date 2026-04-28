@@ -689,18 +689,104 @@ export async function callGeminiWithRetry(
   }
 }
 
+// ─── Hàm gọi DeepSeek Fallback ───
+async function callDeepseekFallback(
+  message: string,
+  history: ChatMessage[],
+  userContext?: UserContext
+) {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) {
+    throw new Error("Gemini đang gặp lỗi và DEEPSEEK_API_KEY chưa được cấu hình.");
+  }
+
+  // 1. Chuyển đổi toolDeclarations của hệ thống (Gemini) sang format OpenAI/DeepSeek
+  const deepseekTools = toolDeclarations.map((t) => ({
+    type: "function",
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: {
+        type: "object",
+        properties: t.parameters?.properties || {},
+        ...(t.parameters?.required ? { required: t.parameters.required } : {})
+      },
+    },
+  }));
+
+  // 2. Chuyển đổi History
+  const dsMessages: any[] = [
+    { role: "system", content: buildSystemInstruction(userContext) },
+    ...(history || []).map((h) => ({
+      role: h.role === "model" ? "assistant" : "user",
+      content: h.parts.map((p) => p.text).join("\n"),
+    })),
+    { role: "user", content: message },
+  ];
+
+  // 3. Vòng lặp Function Calling của DeepSeek
+  let iterations = 0;
+  const MAX_ITERATIONS = 5;
+
+  while (iterations < MAX_ITERATIONS) {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat", // Bạn có thể dùng deepseek-reasoner nếu cần
+        messages: dsMessages,
+        tools: deepseekTools,
+      }),
+    });
+
+    if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`DeepSeek API error: ${res.status} - ${errorText}`);
+    }
+
+    const data = await res.json();
+    const assistantMsg = data.choices[0].message;
+    
+    // Thêm tin nhắn của AI vào lịch sử để tiếp tục gửi tool result hoặc làm context
+    dsMessages.push(assistantMsg);
+
+    // Nếu không có tool_calls, nghĩa là DeepSeek đã ra kết quả văn bản cuối cùng
+    if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
+      return assistantMsg.content;
+    }
+
+    // Thực thi các tool mà DeepSeek yều cầu
+    for (const call of assistantMsg.tool_calls) {
+      console.log(`[DeepSeek Fallback] Tool called: ${call.function.name}`);
+      const args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+      
+      const toolResult = await executeTool(
+        call.function.name,
+        userContext || { name: "Người dùng", role: "user", roleLevel: 5 },
+        args
+      );
+
+      // Nhét kết quả tool vào dsMessages để lần gọi tiếp theo DeepSeek đọc được
+      dsMessages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        name: call.function.name,
+        content: toolResult,
+      });
+    }
+
+    iterations++;
+  }
+
+  throw new Error("Quá số lần lặp Tool Calling trong DeepSeek.");
+}
+
 // ─── Main POST handler ───
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY_HERE") {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY chưa được cấu hình trong file .env" },
-        { status: 500 }
-      );
-    }
-
     const body = await request.json();
     const { message, history, userContext } = body as {
       message: string;
@@ -715,65 +801,84 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-flash-latest",
-      systemInstruction: buildSystemInstruction(userContext),
-      tools: [{ functionDeclarations: toolDeclarations }],
-    });
+    const apiKey = process.env.GEMINI_API_KEY;
 
-    const chat = model.startChat({
-      history: history || [],
-    });
-
-    // Send the user message
-    let result = await chat.sendMessage(message);
-    let response = result.response;
-
-    // Tool Calling loop: handle up to 5 rounds of function calls
-    let iterations = 0;
-    const MAX_ITERATIONS = 5;
-
-    while (iterations < MAX_ITERATIONS) {
-      const functionCalls = response.functionCalls();
-
-      if (!functionCalls || functionCalls.length === 0) {
-        break; // No more function calls, we have the final response
-      }
-
-      // Execute all requested function calls
-      const functionResponses = [];
-      for (const call of functionCalls) {
-        console.log(`[ChatBot] Tool called: ${call.name}`, call.args);
-
-        const toolResult = await executeTool(
-          call.name,
-          userContext || { name: "Người dùng", role: "user", roleLevel: 5 },
-          call.args
-        );
-
-        functionResponses.push({
-          functionResponse: {
-            name: call.name,
-            response: { result: JSON.parse(toolResult) },
-          },
-        });
-      }
-
-      // Send function results back to the model
-      result = await chat.sendMessage(functionResponses);
-      response = result.response;
-      iterations++;
+    if (!apiKey || apiKey === "YOUR_GEMINI_API_KEY_HERE") {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEY chưa được cấu hình trong file .env" },
+        { status: 500 }
+      );
     }
 
-    const text = response.text();
-    return NextResponse.json({ reply: text });
+    try {
+      // Dùng Gemini làm AI chính
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({
+        model: "gemini-flash-latest",
+        systemInstruction: buildSystemInstruction(userContext),
+        tools: [{ functionDeclarations: toolDeclarations }],
+      });
+
+      const chat = model.startChat({
+        history: history || [],
+      });
+
+      // Gửi tinh nhắn của người dùng
+      let result = await chat.sendMessage(message);
+      let response = result.response;
+
+      // Vòng lặp Tool Calling cho Gemini
+      let iterations = 0;
+      const MAX_ITERATIONS = 5;
+
+      while (iterations < MAX_ITERATIONS) {
+        const functionCalls = response.functionCalls();
+
+        if (!functionCalls || functionCalls.length === 0) {
+          break; // Không còn tool call nào nữa
+        }
+
+        const functionResponses = [];
+        for (const call of functionCalls) {
+          console.log(`[ChatBot] Tool called: ${call.name}`, call.args);
+
+          const toolResult = await executeTool(
+            call.name,
+            userContext || { name: "Người dùng", role: "user", roleLevel: 5 },
+            call.args
+          );
+
+          functionResponses.push({
+            functionResponse: {
+              name: call.name,
+              response: { result: JSON.parse(toolResult) },
+            },
+          });
+        }
+
+        // Gửi kết quả lại cho model
+        result = await chat.sendMessage(functionResponses);
+        response = result.response;
+        iterations++;
+      }
+
+      const text = response.text();
+      return NextResponse.json({ reply: text });
+
+    } catch (geminiError: any) {
+      // Trường hợp Gemini lỗi, sẽ gọi DeepSeek Fallback
+      console.warn("Gemini Error, switching to DeepSeek fallback...", geminiError.message || geminiError);
+      
+      const fallbackReply = await callDeepseekFallback(message, history || [], userContext);
+      return NextResponse.json({ reply: fallbackReply });
+    }
+
   } catch (error: unknown) {
-    console.error("Gemini API error:", error);
+    console.error("Chat API error:", error);
     const errorMessage =
       error instanceof Error ? error.message : "Lỗi không xác định";
     return NextResponse.json(
-      { error: `Lỗi khi gọi Gemini API: ${errorMessage}` },
+      { error: `Lỗi khi gọi API: ${errorMessage}` },
       { status: 500 }
     );
   }
