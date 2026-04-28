@@ -302,7 +302,7 @@ export default function Attendance() {
       const { distance, match } = compareFaces(
         currentDescriptor,
         targetFloatArray,
-        0.6,
+        0.3,
       );
 
       if (match) {
@@ -650,22 +650,20 @@ export default function Attendance() {
               <div className="flex bg-gray-100 rounded-xl p-1">
                 <button
                   onClick={() => setMode("check-in")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    mode === "check-in"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === "check-in"
                       ? "bg-white text-green-700 shadow-sm"
                       : "text-gray-500 hover:text-gray-700"
-                  }`}
+                    }`}
                 >
                   <LogIn className="w-4 h-4" />
                   Vào ca
                 </button>
                 <button
                   onClick={() => setMode("check-out")}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    mode === "check-out"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${mode === "check-out"
                       ? "bg-white text-orange-700 shadow-sm"
                       : "text-gray-500 hover:text-gray-700"
-                  }`}
+                    }`}
                 >
                   <LogOut className="w-4 h-4" />
                   Ra ca
@@ -691,12 +689,12 @@ export default function Attendance() {
                   const q = employeeSearch.trim().toLowerCase();
                   const filtered = q
                     ? employees
-                        .filter(
-                          (e) =>
-                            e.employeeCode.toLowerCase().includes(q) ||
-                            e.name.toLowerCase().includes(q),
-                        )
-                        .slice(0, 20)
+                      .filter(
+                        (e) =>
+                          e.employeeCode.toLowerCase().includes(q) ||
+                          e.name.toLowerCase().includes(q),
+                      )
+                      .slice(0, 20)
                     : employees.slice(0, 20);
                   return (
                     <div className="relative">
@@ -922,11 +920,10 @@ export default function Attendance() {
               processing ||
               (!isBypassFace && !!targetFaceDescriptor && !faceMatched)
             }
-            className={`w-full py-4 sm:py-4 rounded-2xl text-white font-bold text-base sm:text-lg transition-all shadow-lg disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-3 active:scale-[0.98] ${
-              mode === "check-in"
+            className={`w-full py-4 sm:py-4 rounded-2xl text-white font-bold text-base sm:text-lg transition-all shadow-lg disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-3 active:scale-[0.98] ${mode === "check-in"
                 ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
                 : "bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700"
-            }`}
+              }`}
           >
             {processing ? (
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -945,15 +942,14 @@ export default function Attendance() {
           {/* Result message */}
           {resultMessage && (
             <div
-              className={`rounded-xl p-4 text-sm font-medium flex items-center gap-2 ${
-                resultType === "success"
+              className={`rounded-xl p-4 text-sm font-medium flex items-center gap-2 ${resultType === "success"
                   ? "bg-green-50 border border-green-200 text-green-700"
                   : resultType === "error"
                     ? "bg-red-50 border border-red-200 text-red-700"
                     : resultType === "warning"
                       ? "bg-yellow-50 border border-yellow-200 text-yellow-700"
                       : "bg-blue-50 border border-blue-200 text-blue-700"
-              }`}
+                }`}
             >
               {resultType === "success" && (
                 <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
@@ -1151,15 +1147,14 @@ export default function Attendance() {
 
                   {/* Status badge */}
                   <span
-                    className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                      record.status === "on-time"
+                    className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold ${record.status === "on-time"
                         ? "bg-green-100 text-green-700"
                         : record.status === "late"
                           ? "bg-yellow-100 text-yellow-700"
                           : record.status === "early-leave"
                             ? "bg-orange-100 text-orange-700"
                             : "bg-gray-100 text-gray-500"
-                    }`}
+                      }`}
                   >
                     {record.status === "on-time"
                       ? "Đúng giờ"
@@ -1200,11 +1195,10 @@ export default function Attendance() {
                         key={p}
                         onClick={() => loadTodayPage(p)}
                         disabled={todayLoading}
-                        className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${
-                          p === todayPage
+                        className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${p === todayPage
                             ? "bg-primary-600 text-white"
                             : "hover:bg-gray-100 text-gray-600"
-                        }`}
+                          }`}
                       >
                         {p}
                       </button>
