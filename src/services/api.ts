@@ -1,9 +1,25 @@
 const APP_BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || `${APP_BASE_PATH}/api`).replace(/\/$/, '');
 
+// Origin of the backend (e.g. "https://api-hrm.fitlhu.com")
+const API_ORIGIN = API_BASE.replace(/\/api$/, '');
+
 export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${API_BASE}${normalizedPath}`;
+}
+
+/**
+ * Resolve an avatar URL that may be a relative path like /uploads/avatars/...
+ * and prefix it with the backend origin so it loads from the correct server.
+ */
+export function resolveAvatarUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  // Already absolute or a data URI — return as-is
+  if (url.startsWith('http') || url.startsWith('data:') || url.startsWith('blob:')) return url;
+  // Relative path from backend uploads
+  if (url.startsWith('/uploads/')) return `${API_ORIGIN}${url}`;
+  return url;
 }
 
 function getToken(): string | null {
@@ -67,7 +83,7 @@ export const authApi = {
     request<{ token: string; user: Record<string, unknown> }>('POST', '/auth/register', data),
   me: () => request<Record<string, unknown>>('GET', '/auth/me'),
   profile: () => request<Record<string, unknown>>('GET', '/auth/profile'),
-  updateProfile: (data: { avatar?: string; email?: string; phone?: string }) =>
+  updateProfile: (data: { avatar?: string; email?: string; phone?: string; name?: string }) =>
     request<Record<string, unknown>>('PUT', '/auth/profile', data),
   changePassword: (data: { oldPassword: string; newPassword: string }) =>
     request<{ message: string }>('PUT', '/auth/change-password', data),
@@ -76,6 +92,25 @@ export const authApi = {
   setUserRoles: (employeeId: string, roles: string[]) =>
     request<{ message: string; roles: string[] }>('PUT', `/auth/users/${encodeURIComponent(employeeId)}/roles`, { roles }),
 };
+
+// ============ Upload ============
+export async function uploadAvatar(file: File): Promise<string> {
+  const token = getToken();
+  const formData = new FormData();
+  formData.append('avatar', file);
+  const url = buildApiUrl('/upload/avatar');
+  const res = await fetch(url.startsWith('http') ? url : new URL(url, window.location.origin).toString(), {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  const data = await res.json();
+  return data.url as string;
+}
 
 // ============ Employees ============
 export const employeesApi = {
@@ -87,7 +122,7 @@ export const employeesApi = {
   delete: (id: string) => request<void>('DELETE', `/employees/${encodeURIComponent(id)}`),
   saveFace: (id: string, data: { faceDescriptor: number[]; faceImage: string }) =>
     request<void>('POST', `/employees/${encodeURIComponent(id)}/face`, data),
-  getFaceDescriptors: () => request<{ employeeId: string; faceDescriptor: number[] }[]>('GET', '/employees/face-descriptors'),
+  getFaceDescriptors: () => request<{ id: string; faceDescriptor: number[] }[]>('GET', '/employees/face-descriptors'),
 };
 
 // ============ Departments ============
@@ -134,6 +169,10 @@ export const attendanceApi = {
     request<Record<string, unknown>>('POST', '/attendance/check-in', data),
   checkOut: (data: { employeeId: string; checkOutImage?: string }) =>
     request<Record<string, unknown>>('POST', '/attendance/check-out', data),
+  checkInOT: (data: { employeeId?: string; otRequestId?: string; checkInImage?: string }) =>
+    request<Record<string, unknown>>('POST', '/attendance/check-in-ot', data),
+  checkOutOT: (data: { employeeId?: string; otRequestId?: string; checkOutImage?: string }) =>
+    request<Record<string, unknown>>('POST', '/attendance/check-out-ot', data),
   createManual: (data: Record<string, unknown>) =>
     request<Record<string, unknown>>('POST', '/attendance/manual', data),
   update: (id: string, data: Record<string, unknown>) =>

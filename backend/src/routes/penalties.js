@@ -196,6 +196,12 @@ router.put('/:id', authenticate, async (req, res) => {
     if (req.user.role !== 'admin' && isManagerLevel(req)) {
       const [check] = await pool.execute('SELECT employee_id FROM penalties WHERE id = ?', [req.params.id]);
       if (check.length === 0) return res.status(404).json({ error: 'Không tìm thấy' });
+
+      // Prevent managers from resolving their own penalty
+      if (check[0].employee_id === req.user.employeeId) {
+        return res.status(403).json({ error: 'Không thể tự duyệt vi phạm của chính mình' });
+      }
+
       const deptIds = await getDeptEmployeeIds(req.user.employeeId);
       if (!deptIds.includes(check[0].employee_id)) {
         return res.status(403).json({ error: 'Không có quyền xử lý vi phạm ngoài phòng ban' });
@@ -236,8 +242,12 @@ router.delete('/:id', authenticate, async (req, res) => {
     const [rows] = await pool.execute('SELECT * FROM penalties WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy phạt' });
 
-    // If manager, check department scope
+    // If manager, check department scope AND self-delete prevention
     if (req.user.role !== 'admin') {
+      // Manager cannot delete their own penalty
+      if (rows[0].employee_id === req.user.employeeId) {
+        return res.status(403).json({ error: 'Không thể xóa vi phạm của chính mình' });
+      }
       const deptIds = await getDeptEmployeeIds(req.user.employeeId);
       if (!deptIds.includes(rows[0].employee_id)) {
         return res.status(403).json({ error: 'Không có quyền xóa vi phạm ngoài phòng ban' });

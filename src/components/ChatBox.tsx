@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useAuth } from "@/contexts/AuthContext";
+import { showToast } from "@/components/Toast";
 
 interface Message {
   role: "user" | "model";
@@ -16,6 +18,62 @@ interface ChatHistory {
   parts: { text: string }[];
 }
 
+// ─── Reminder handling ───
+interface Reminder {
+  time: string; // HH:mm
+  message: string;
+}
+
+function extractReminders(
+  text: string
+): { cleanText: string; reminders: Reminder[] } {
+  const reminders: Reminder[] = [];
+  const cleanText = text.replace(
+    /<!--REMINDER:(.*?)-->/g,
+    (_match, jsonStr: string) => {
+      try {
+        const reminder = JSON.parse(jsonStr) as Reminder;
+        if (reminder.time && reminder.message) {
+          reminders.push(reminder);
+        }
+      } catch {
+        // Invalid JSON, ignore
+      }
+      return ""; // Remove from displayed text
+    }
+  );
+
+  return { cleanText: cleanText.trim(), reminders };
+}
+
+function scheduleReminder(reminder: Reminder) {
+  const now = new Date();
+  const vnNow = new Date(
+    now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" })
+  );
+
+  const [hours, minutes] = reminder.time.split(":").map(Number);
+  const target = new Date(vnNow);
+  target.setHours(hours, minutes, 0, 0);
+
+  let delayMs = target.getTime() - vnNow.getTime();
+
+  if (delayMs <= 0) {
+    // If the time has already passed today, show immediately
+    showToast("info", "⏰ Nhắc nhở", reminder.message);
+    return;
+  }
+
+  // Cap at 24 hours to prevent runaway timers
+  if (delayMs > 24 * 60 * 60 * 1000) {
+    delayMs = 24 * 60 * 60 * 1000;
+  }
+
+  setTimeout(() => {
+    showToast("info", "⏰ Nhắc nhở", reminder.message);
+  }, delayMs);
+}
+
 export default function ChatBox() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -24,6 +82,7 @@ export default function ChatBox() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
+  const { user } = useAuth();
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -46,6 +105,21 @@ export default function ChatBox() {
     }));
   };
 
+  // Build user context from AuthContext
+  const buildUserContext = () => {
+    if (!user) return undefined;
+    return {
+      employeeId: user.employeeId,
+      name: user.name,
+      role: user.role,
+      roleLevel: user.roleLevel,
+      department: user.department,
+      token: typeof window !== "undefined"
+        ? localStorage.getItem("auth_token") || undefined
+        : undefined,
+    };
+  };
+
   const sendMessage = async () => {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
@@ -63,13 +137,23 @@ export default function ChatBox() {
         body: JSON.stringify({
           message: trimmed,
           history: buildHistory(messages),
+          userContext: buildUserContext(),
         }),
       });
 
       const data = await res.json();
 
       if (res.ok && data.reply) {
-        setMessages((prev) => [...prev, { role: "model", text: data.reply }]);
+        // Extract reminders before displaying
+        const { cleanText, reminders } = extractReminders(data.reply);
+
+        // Schedule any reminders
+        reminders.forEach((r) => scheduleReminder(r));
+
+        setMessages((prev) => [
+          ...prev,
+          { role: "model", text: cleanText || data.reply },
+        ]);
       } else {
         setMessages((prev) => [
           ...prev,
@@ -130,7 +214,7 @@ export default function ChatBox() {
                   AquaFlow HRM System Assistant
                 </p>
                 <p className="text-[10px] text-primary-100 leading-tight">
-                  Hướng dẫn sử dụng hệ thống
+                  Trợ lý thông minh hệ thống
                 </p>
               </div>
             </div>
@@ -151,17 +235,19 @@ export default function ChatBox() {
                   <Bot className="w-6 h-6 text-primary-500" />
                 </div>
                 <p className="text-sm font-medium text-gray-700">
-                  Xin chào! 👋
+                  Xin chào{user ? `, ${user.name}` : ""}! 👋
                 </p>
                 <p className="text-xs text-gray-500 mt-1">
-                  Tôi có thể giúp bạn tìm hiểu cách sử dụng hệ thống AquaFlow
-                  HRM System.
+                  Tôi có thể giúp bạn tra cứu ca làm việc, chấm công, nghỉ
+                  phép, tăng ca và hướng dẫn sử dụng hệ thống.
                 </p>
                 <div className="mt-4 space-y-1.5">
                   {[
-                    "Làm sao để chấm công?",
-                    "Cách xem bảng lương",
-                    "Đăng ký nghỉ phép thế nào?",
+                    "Hôm nay tôi làm ca gì?",
+                    "Tôi đã chấm công chưa?",
+                    "Xem đơn nghỉ phép của tôi",
+                    "Xem lịch tăng ca của tôi",
+                    "Nhắc tôi chấm công ra lúc 17:00",
                   ].map((q) => (
                     <button
                       key={q}

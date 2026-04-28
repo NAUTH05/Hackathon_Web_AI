@@ -1,18 +1,12 @@
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import {
-  captureSnapshot,
-  detectFace,
-  isModelsLoaded,
-  loadModels,
-} from "../services/faceRecognition";
+import { useEffect, useState } from "react";
+import { FaceEnrollment } from "../components/FaceEnrollment";
+import { showToast } from "../components/Toast";
+import { resolveAvatarUrl, uploadAvatar } from "../services/api";
 import {
   addEmployee,
-  deleteFaceDescriptor,
   getDepartments,
   getEmployeeById,
-  getFaceDescriptors,
-  saveFaceDescriptor,
   updateEmployee,
 } from "../store/storage";
 import type { Department, Employee } from "../types";
@@ -24,13 +18,10 @@ export default function EmployeeForm() {
   const router = useRouter();
   const isEdit = !!id;
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-
   const [form, setForm] = useState({
     name: "",
     employeeCode: "",
-    department: "",
+    departmentId: "",
     position: "",
     roleLevel: 5,
     email: "",
@@ -38,16 +29,9 @@ export default function EmployeeForm() {
     isActive: true,
   });
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarDeleted, setAvatarDeleted] = useState(false);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [faceImage, setFaceImage] = useState<string | null>(null);
-  const [faceDescriptor, setFaceDescriptor] = useState<Float32Array | null>(
-    null,
-  );
-  const [hasFace, setHasFace] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [capturing, setCapturing] = useState(false);
-  const [modelsReady, setModelsReady] = useState(isModelsLoaded());
-  const [loadingModels, setLoadingModels] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
 
   useEffect(() => {
@@ -60,7 +44,7 @@ export default function EmployeeForm() {
           setForm({
             name: emp.name,
             employeeCode: emp.employeeCode,
-            department: emp.department,
+            departmentId: emp.departmentId || "",
             position: emp.position,
             roleLevel: emp.roleLevel ?? 5,
             email: emp.email,
@@ -68,147 +52,71 @@ export default function EmployeeForm() {
             isActive: emp.isActive,
           });
           if (emp.avatar) setAvatarPreview(emp.avatar);
-          if (emp.faceImage) setFaceImage(emp.faceImage);
-          const descriptors = await getFaceDescriptors();
-          if (descriptors.has(emp.id)) setHasFace(true);
         }
       }
     }
     init();
-    return () => stopCamera();
   }, [id]);
-
-  async function initModels() {
-    setLoadingModels(true);
-    try {
-      await loadModels();
-      setModelsReady(true);
-    } catch {
-      setSaveMessage("Không thể tải mô hình nhận diện khuôn mặt.");
-    } finally {
-      setLoadingModels(false);
-    }
-  }
-
-  async function startCamera() {
-    try {
-      if (!modelsReady) await initModels();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 480, height: 360, facingMode: "user" },
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
-    } catch {
-      setSaveMessage("Không thể truy cập camera.");
-    }
-  }
-
-  function stopCamera() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
-    setCameraActive(false);
-  }
-
-  async function captureFace() {
-    if (!videoRef.current) return;
-    setCapturing(true);
-    setSaveMessage("");
-    try {
-      const detection = await detectFace(videoRef.current);
-      if (!detection) {
-        setSaveMessage("Không phát hiện khuôn mặt. Hãy nhìn thẳng vào camera.");
-        setCapturing(false);
-        return;
-      }
-      const snapshot = captureSnapshot(videoRef.current);
-      setFaceImage(snapshot);
-      setFaceDescriptor(detection.descriptor);
-      setHasFace(true);
-      setSaveMessage("✅ Đã chụp khuôn mặt thành công!");
-      stopCamera();
-    } catch {
-      setSaveMessage("Lỗi khi chụp khuôn mặt. Vui lòng thử lại.");
-    } finally {
-      setCapturing(false);
-    }
-  }
-
-  async function removeFace() {
-    setFaceImage(null);
-    setFaceDescriptor(null);
-    setHasFace(false);
-    if (isEdit && id) await deleteFaceDescriptor(id);
-    setSaveMessage("Đã xóa dữ liệu khuôn mặt.");
-  }
 
   function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) {
-      setSaveMessage("Ảnh quá lớn. Tối đa 2MB.");
+      showToast("warning", "Ảnh quá lớn", "Kích thước tối đa là 2MB.");
       return;
     }
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAvatarPreview(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    setAvatarFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
+    setAvatarDeleted(false);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form.name.trim() || !form.employeeCode.trim()) {
-      setSaveMessage("Vui lòng nhập đầy đủ Họ tên và Mã nhân viên.");
+      showToast("warning", "Thiếu thông tin", "Vui lòng nhập đầy đủ Họ tên và Mã nhân viên.");
       return;
     }
 
     try {
-      let employeeId: string;
+      // Upload avatar file first if a new one was selected
+      // avatarUrl: string = new URL, null = explicitly deleted, undefined = unchanged
+      let avatarUrl: string | null | undefined;
+      if (avatarFile) {
+        avatarUrl = await uploadAvatar(avatarFile);
+      } else if (avatarDeleted) {
+        avatarUrl = null; // tell backend to clear avatar
+      } else {
+        avatarUrl = avatarPreview ?? undefined; // keep existing
+      }
       if (isEdit) {
         const updated = await updateEmployee(id!, {
           ...form,
-          avatar: avatarPreview || undefined,
-          faceImage: faceImage || undefined,
+          avatar: avatarUrl,
         });
-        employeeId = updated.id;
-        if (faceDescriptor)
-          await saveFaceDescriptor(
-            employeeId,
-            faceDescriptor,
-            faceImage || undefined,
-          );
-        router.push("/employees");
+        // Cập nhật lại preview và trạng thái sau khi lưu thành công
+        setAvatarFile(null);
+        setAvatarDeleted(false);
+        setAvatarPreview((updated.avatar as string) || null);
+        showToast("success", "Cập nhật thành công", "Thông tin nhân viên đã được lưu.");
+        return;
       } else {
         const created = (await addEmployee({
           ...form,
-          avatar: avatarPreview || undefined,
-          faceImage: faceImage || undefined,
+          avatar: avatarUrl,
         })) as Employee & { defaultUsername?: string };
-        employeeId = created.id;
-        if (faceDescriptor)
-          await saveFaceDescriptor(
-            employeeId,
-            faceDescriptor,
-            faceImage || undefined,
-          );
         const loginUsername =
           (created as { defaultUsername?: string }).defaultUsername ||
           form.employeeCode;
         setSaveMessage(
           `✅ Đã tạo nhân viên thành công!\n🔑 Tài khoản đăng nhập:\n   Username: ${loginUsername}\n   Mật khẩu mặc định: 123456\n(Nhân viên nên đổi mật khẩu sau khi đăng nhập lần đầu)`,
         );
+        showToast("success", "Tạo nhân viên thành công", `Tài khoản: ${loginUsername} / 123456`);
         setTimeout(() => router.push("/employees"), 5000);
         return;
       }
     } catch (err) {
-      setSaveMessage(err instanceof Error ? err.message : "Lỗi khi lưu");
+      const msg = err instanceof Error ? err.message : "Lỗi khi lưu";
+      showToast("error", "Lưu thất bại", msg);
     }
   }
 
@@ -272,15 +180,15 @@ export default function EmployeeForm() {
                 Phòng ban
               </label>
               <select
-                value={form.department}
+                value={form.departmentId}
                 onChange={(e) =>
-                  setForm({ ...form, department: e.target.value })
+                  setForm({ ...form, departmentId: e.target.value })
                 }
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <option value="">Chọn phòng ban</option>
                 {departments.map((d) => (
-                  <option key={d.id} value={d.name}>
+                  <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
                 ))}
@@ -364,7 +272,7 @@ export default function EmployeeForm() {
             <div className="w-24 h-24 rounded-xl bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden flex-shrink-0">
               {avatarPreview ? (
                 <img
-                  src={avatarPreview}
+                  src={resolveAvatarUrl(avatarPreview) ?? ""}
                   alt="Avatar"
                   className="w-full h-full object-cover"
                 />
@@ -385,7 +293,11 @@ export default function EmployeeForm() {
               {avatarPreview && (
                 <button
                   type="button"
-                  onClick={() => setAvatarPreview(null)}
+                  onClick={() => {
+                    setAvatarPreview(null);
+                    setAvatarFile(null);
+                    setAvatarDeleted(true);
+                  }}
                   className="ml-2 px-3 py-2 bg-red-50 text-red-600 text-sm font-medium rounded-lg hover:bg-red-100 transition-colors"
                 >
                   Xóa ảnh
@@ -398,104 +310,8 @@ export default function EmployeeForm() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-4">
-            Đăng ký khuôn mặt
-          </h3>
-          <div className="flex flex-col items-center">
-            {faceImage && !cameraActive ? (
-              <div className="relative mb-4">
-                <img
-                  src={faceImage}
-                  alt="Face"
-                  className="w-48 h-48 rounded-xl object-cover border-2 border-green-400"
-                />
-                <div className="absolute -top-2 -right-2 bg-green-500 rounded-full px-1.5 py-0.5 text-[10px] text-white font-bold">
-                  ✓
-                </div>
-              </div>
-            ) : cameraActive ? (
-              <div className="camera-container relative mb-4">
-                <video
-                  ref={videoRef}
-                  className="w-80 h-60 rounded-xl object-cover bg-gray-900"
-                  muted
-                  playsInline
-                />
-              </div>
-            ) : (
-              <div className="w-48 h-48 rounded-xl bg-gray-100 border-2 border-dashed border-gray-300 flex flex-col items-center justify-center mb-4">
-                <p className="text-3xl text-gray-300 mb-2">👤</p>
-                <p className="text-xs text-gray-400">Chưa có ảnh khuôn mặt</p>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              {!cameraActive ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={startCamera}
-                    disabled={loadingModels}
-                    className="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
-                  >
-                    {loadingModels
-                      ? "Đang tải..."
-                      : faceImage
-                        ? "Chụp lại"
-                        : "Bật camera"}
-                  </button>
-                  {faceImage && (
-                    <button
-                      type="button"
-                      onClick={removeFace}
-                      className="px-4 py-2 bg-red-50 text-red-600 text-sm font-medium rounded-lg hover:bg-red-100 transition-colors"
-                    >
-                      Xóa ảnh
-                    </button>
-                  )}
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={captureFace}
-                    disabled={capturing}
-                    className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
-                  >
-                    {capturing ? "Đang chụp..." : "Chụp khuôn mặt"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={stopCamera}
-                    className="px-4 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300 transition-colors"
-                  >
-                    Hủy
-                  </button>
-                </>
-              )}
-            </div>
-
-            {saveMessage && (
-              <p
-                className={`mt-3 text-sm ${
-                  saveMessage.includes("✅") ||
-                  saveMessage.includes("thành công")
-                    ? "text-green-600"
-                    : saveMessage.includes("Đã xóa")
-                      ? "text-yellow-600"
-                      : "text-red-600"
-                }`}
-              >
-                {saveMessage}
-              </p>
-            )}
-            <p className="text-xs text-gray-400 mt-3 text-center max-w-sm">
-              Nhìn thẳng vào camera, đảm bảo ánh sáng đủ. Khuôn mặt sẽ được dùng
-              để nhận diện khi chấm công.
-            </p>
-          </div>
-        </div>
+        {/* Face Enrollment — only shown when editing an existing employee */}
+        {isEdit && id && <FaceEnrollment employeeId={id} />}
 
         <div className="flex items-center justify-end gap-3">
           <button

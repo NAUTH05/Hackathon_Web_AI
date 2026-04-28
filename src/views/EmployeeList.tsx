@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import ConfirmDialog from "../components/ConfirmDialog";
 import Pagination from "../components/Pagination";
 import { useAuth } from "../contexts/AuthContext";
-import { authApi } from "../services/api";
+import { authApi, resolveAvatarUrl } from "../services/api";
 import {
   deleteEmployee,
   deleteFaceDescriptor,
@@ -47,6 +47,9 @@ export default function EmployeeList() {
   const [filterPosition, setFilterPosition] = useState("");
   const [confirmDeleteEmployee, setConfirmDeleteEmployee] =
     useState<Employee | null>(null);
+
+  // Face preview modal
+  const [faceModalEmp, setFaceModalEmp] = useState<Employee | null>(null);
 
   // Role management modal
   const [roleModalEmp, setRoleModalEmp] = useState<Employee | null>(null);
@@ -370,9 +373,9 @@ export default function EmployeeList() {
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
                           <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
-                            {emp.faceImage ? (
+                            {emp.avatar ? (
                               <img
-                                src={emp.faceImage}
+                                src={resolveAvatarUrl(emp.avatar) ?? ""}
                                 alt={emp.name}
                                 className="w-9 h-9 rounded-full object-cover"
                               />
@@ -447,6 +450,14 @@ export default function EmployeeList() {
                             >
                               Sửa
                             </Link>
+                            <button
+                              type="button"
+                              onClick={() => setFaceModalEmp(emp)}
+                              className="px-2 py-1 rounded-lg hover:bg-blue-50 text-xs text-blue-600 font-medium transition-colors"
+                              title="Xem ảnh Face ID"
+                            >
+                              Xem FACE
+                            </button>
                             <button
                               onClick={() => openRoleModal(emp)}
                               className="px-2 py-1 rounded-lg hover:bg-purple-50 text-xs text-purple-600 font-medium transition-colors"
@@ -590,6 +601,59 @@ export default function EmployeeList() {
                   Lưu thay đổi
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Face preview modal */}
+      {faceModalEmp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">
+                  Ảnh Face ID
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {faceModalEmp.name} ({faceModalEmp.employeeCode})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFaceModalEmp(null)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="p-6 flex flex-col items-center gap-4">
+              {faceModalEmp.faceImage ? (
+                <img
+                  src={faceModalEmp.faceImage}
+                  alt="Face ID"
+                  className="w-48 h-48 rounded-2xl object-cover border-2 border-green-400 shadow"
+                />
+              ) : (
+                <div className="w-48 h-48 rounded-2xl bg-gray-100 border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400">
+                  <span className="text-4xl mb-2">👤</span>
+                  <span className="text-xs">Chưa có ảnh Face ID</span>
+                </div>
+              )}
+              <span
+                className={`text-xs px-3 py-1 rounded-full font-medium ${faceModalEmp.faceImage ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
+              >
+                {faceModalEmp.faceImage ? "Đã đăng ký Face ID" : "Chưa đăng ký"}
+              </span>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setFaceModalEmp(null)}
+                className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Đóng
+              </button>
             </div>
           </div>
         </div>

@@ -82,6 +82,35 @@ async function seed() {
     }
     console.log('✅ Schema created');
 
+    // ========== 1b. RUN MIGRATIONS (additional tables) ==========
+    const migrationFiles = [
+      'migrate-payroll-rules.sql',
+      'migrate-deduction-items.sql',
+      'migrate-formula-variables.sql',
+      'migrate-payroll-config.sql',
+    ];
+    for (const mFile of migrationFiles) {
+      const mPath = path.join(__dirname, mFile);
+      if (fs.existsSync(mPath)) {
+        const migration = fs.readFileSync(mPath, 'utf8');
+        const mStatements = migration
+          .split(';')
+          .map(s => s.trim())
+          .filter(s => s.length > 0 && !s.startsWith('--'));
+        for (const stmt of mStatements) {
+          try {
+            await connection.execute(stmt);
+          } catch (mErr) {
+            // Ignore "duplicate column" or "table already exists" errors
+            if (mErr.code !== 'ER_DUP_FIELDNAME' && mErr.code !== 'ER_TABLE_EXISTS_ERROR' && mErr.errno !== 1060 && mErr.errno !== 1050) {
+              console.warn(`  ⚠️  Migration warning (${mFile}):`, mErr.message);
+            }
+          }
+        }
+        console.log(`✅ Migration applied: ${mFile}`);
+      }
+    }
+
     // ========== 2. DEPARTMENTS (tree structure) ==========
     const departments = [
       { id: 'dept-001', name: 'Ban Giám đốc', description: 'Ban giám đốc công ty', parentId: null },

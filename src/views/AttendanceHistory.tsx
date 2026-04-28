@@ -72,7 +72,9 @@ export default function AttendanceHistory() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
-  const [filterDate, setFilterDate] = useState("");
+  const [filterDate, setFilterDate] = useState(
+    format(new Date(), "yyyy-MM-dd"),
+  );
   const [filterEmployee, setFilterEmployee] = useState("");
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");

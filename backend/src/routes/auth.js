@@ -3,7 +3,7 @@ const pool = require('../config/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { authenticate, loadUserRoles } = require('../middleware/auth');
-const { toCamelCase } = require('../helpers');
+const { toCamelCase, deleteAvatarFile } = require('../helpers');
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
@@ -160,15 +160,24 @@ router.get('/profile', authenticate, async (req, res) => {
   }
 });
 
-// PUT /api/auth/profile — update own avatar, email, phone
+// PUT /api/auth/profile — update own avatar, email, phone, name
 router.put('/profile', authenticate, async (req, res) => {
   try {
-    const { avatar, email, phone } = req.body;
+    const { avatar, email, phone, name } = req.body;
     const userId = req.user.id;
 
-    // Update user avatar
-    if (avatar !== undefined) {
-      await pool.execute('UPDATE users SET avatar = ? WHERE id = ?', [avatar, userId]);
+    // Fetch old avatar before any update (for cleanup)
+    const [oldUserRows] = await pool.execute('SELECT avatar FROM users WHERE id = ?', [userId]);
+    const oldAvatarUrl = oldUserRows[0]?.avatar || null;
+
+    // Update user table fields
+    const userSets = [];
+    const userVals = [];
+    if (avatar !== undefined) { userSets.push('avatar = ?'); userVals.push(avatar); }
+    if (name !== undefined && name.trim()) { userSets.push('name = ?'); userVals.push(name.trim()); }
+    if (userSets.length > 0) {
+      userVals.push(userId);
+      await pool.execute(`UPDATE users SET ${userSets.join(', ')} WHERE id = ?`, userVals);
     }
 
     // Update linked employee fields
@@ -186,6 +195,7 @@ router.put('/profile', authenticate, async (req, res) => {
       if (avatar !== undefined) { sets.push('avatar = ?'); vals.push(avatar); }
       if (email !== undefined) { sets.push('email = ?'); vals.push(email); }
       if (phone !== undefined) { sets.push('phone = ?'); vals.push(phone); }
+      if (name !== undefined && name.trim()) { sets.push('name = ?'); vals.push(name.trim()); }
       if (sets.length > 0) {
         vals.push(employeeId);
         await pool.execute(`UPDATE employees SET ${sets.join(', ')} WHERE id = ?`, vals);
@@ -215,6 +225,12 @@ router.put('/profile', authenticate, async (req, res) => {
       [userId]
     );
     const row = rows[0];
+
+    // Xóa file avatar cũ trên disk nếu avatar đã thay đổi
+    if (avatar !== undefined && oldAvatarUrl && oldAvatarUrl !== (row.avatar || null)) {
+      deleteAvatarFile(oldAvatarUrl);
+    }
+
     res.json({
       id: row.id,
       username: row.username,

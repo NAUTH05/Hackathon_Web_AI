@@ -97,7 +97,7 @@ export async function getFaceDescriptors(): Promise<Map<string, Float32Array>> {
   const map = new Map<string, Float32Array>();
   data.forEach((d) => {
     if (d.faceDescriptor && d.faceDescriptor.length > 0) {
-      map.set(d.employeeId, new Float32Array(d.faceDescriptor));
+      map.set(d.id, new Float32Array(d.faceDescriptor));
     }
   });
   return map;
@@ -156,6 +156,14 @@ export async function checkIn(data: { employeeId: string; shiftId?: string; lati
 
 export async function checkOut(data: { employeeId: string; shiftId?: string; checkOutImage?: string }): Promise<AttendanceRecord> {
   return castOne<AttendanceRecord>(await attendanceApi.checkOut(data));
+}
+
+export async function checkInOT(data: { employeeId?: string; otRequestId?: string; checkInImage?: string }): Promise<AttendanceRecord> {
+  return castOne<AttendanceRecord>(await attendanceApi.checkInOT(data));
+}
+
+export async function checkOutOT(data: { employeeId?: string; otRequestId?: string; checkOutImage?: string }): Promise<AttendanceRecord> {
+  return castOne<AttendanceRecord>(await attendanceApi.checkOutOT(data));
 }
 
 export async function getAttendanceStats(): Promise<Record<string, unknown>> {

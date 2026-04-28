@@ -24,7 +24,7 @@ router.get('/rules', authenticate, async (req, res) => {
 });
 
 // POST /api/salary/rules — create a new rule
-router.post('/rules', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/rules', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { rule_type, name, description, config, priority, is_active } = req.body;
     if (!rule_type || !name || !config) {
@@ -49,7 +49,7 @@ router.post('/rules', authenticate, requireSalaryRole, async (req, res) => {
 });
 
 // PUT /api/salary/rules/:id — update a rule
-router.put('/rules/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.put('/rules/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { name, description, config, priority, is_active } = req.body;
     const sets = [];
@@ -74,7 +74,7 @@ router.put('/rules/:id', authenticate, requireSalaryRole, async (req, res) => {
 });
 
 // DELETE /api/salary/rules/:id — delete a rule
-router.delete('/rules/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.delete('/rules/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     await pool.execute('DELETE FROM payroll_rules WHERE id = ?', [req.params.id]);
     res.json({ message: 'Đã xóa rule' });
@@ -98,7 +98,7 @@ router.get('/deduction-items', authenticate, async (req, res) => {
 });
 
 // POST /api/salary/deduction-items — create deduction item
-router.post('/deduction-items', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/deduction-items', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { name, type, calc_type, amount, rate, description, priority, is_active } = req.body;
     if (!name || !type || !calc_type) return res.status(400).json({ error: 'Thiếu thông tin bắt buộc' });
@@ -121,7 +121,7 @@ router.post('/deduction-items', authenticate, requireSalaryRole, async (req, res
 });
 
 // PUT /api/salary/deduction-items/:id — update deduction item
-router.put('/deduction-items/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.put('/deduction-items/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { name, type, calc_type, amount, rate, description, priority, is_active } = req.body;
     const sets = [];
@@ -145,7 +145,7 @@ router.put('/deduction-items/:id', authenticate, requireSalaryRole, async (req, 
 });
 
 // DELETE /api/salary/deduction-items/:id — delete deduction item
-router.delete('/deduction-items/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.delete('/deduction-items/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     await pool.execute('DELETE FROM salary_deduction_items WHERE id = ?', [req.params.id]);
     res.json({ message: 'Đã xóa' });
@@ -169,7 +169,7 @@ router.get('/variables', authenticate, async (req, res) => {
 });
 
 // POST /api/salary/variables — create a custom variable
-router.post('/variables', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/variables', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { id, label, value, description } = req.body;
     if (!id || !label || value == null) return res.status(400).json({ error: 'Thiếu id, label hoặc value' });
@@ -191,7 +191,7 @@ router.post('/variables', authenticate, requireSalaryRole, async (req, res) => {
 });
 
 // PUT /api/salary/variables/:id — update a variable
-router.put('/variables/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.put('/variables/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { label, value, description } = req.body;
     const updates = [];
@@ -212,7 +212,7 @@ router.put('/variables/:id', authenticate, requireSalaryRole, async (req, res) =
 });
 
 // DELETE /api/salary/variables/:id — delete a variable
-router.delete('/variables/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.delete('/variables/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const [result] = await pool.execute('DELETE FROM formula_variables WHERE id = ?', [req.params.id]);
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Không tìm thấy biến' });
@@ -263,7 +263,7 @@ router.get('/presets', authenticate, async (req, res) => {
 });
 
 // POST /api/salary/presets
-router.post('/presets', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/presets', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { name, description, baseSalary, formulaType, customFormula, allowances, isDefault } = req.body;
     const id = req.body.id || uuidv4();
@@ -283,7 +283,7 @@ router.post('/presets', authenticate, requireSalaryRole, async (req, res) => {
 });
 
 // PUT /api/salary/presets/:id
-router.put('/presets/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.put('/presets/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { name, description, baseSalary, formulaType, customFormula, allowances, isDefault } = req.body;
 
@@ -309,7 +309,7 @@ router.put('/presets/:id', authenticate, requireSalaryRole, async (req, res) => 
 });
 
 // DELETE /api/salary/presets/:id
-router.delete('/presets/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.delete('/presets/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const [rows] = await pool.execute('SELECT * FROM salary_presets WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy mẫu lương' });
@@ -340,7 +340,7 @@ router.get('/assignments', authenticate, adminOrSalaryRole, async (req, res) => 
 });
 
 // POST /api/salary/assignments
-router.post('/assignments', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/assignments', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { employeeId, presetId } = req.body;
 
@@ -455,7 +455,7 @@ router.get('/coefficients', authenticate, async (req, res) => {
 });
 
 // PUT /api/salary/coefficients/:type — upsert one canonical row per type
-router.put('/coefficients/:type', authenticate, requireSalaryRole, async (req, res) => {
+router.put('/coefficients/:type', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { multiplier, description } = req.body;
     const type = req.params.type;
@@ -478,7 +478,7 @@ router.put('/coefficients/:type', authenticate, requireSalaryRole, async (req, r
 });
 
 // DELETE /api/salary/coefficients/:type — remove a coefficient type
-router.delete('/coefficients/:type', authenticate, requireSalaryRole, async (req, res) => {
+router.delete('/coefficients/:type', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const type = req.params.type;
     await pool.execute('DELETE FROM salary_coefficients WHERE type = ?', [type]);
@@ -584,7 +584,7 @@ router.get('/records', authenticate, async (req, res) => {
 });
 
 // POST /api/salary/calculate — calculate salary for a month
-router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/calculate', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
 
     const { month } = req.body; // format YYYY-MM
@@ -997,7 +997,7 @@ router.post('/calculate', authenticate, requireSalaryRole, async (req, res) => {
 });
 
 // PUT /api/salary/records/:id — update salary record details
-router.put('/records/:id', authenticate, requireSalaryRole, async (req, res) => {
+router.put('/records/:id', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { insuranceAmount, healthInsuranceAmount, allowancesDetail, deductionsDetail, dedicationAmount } = req.body;
 
@@ -1029,7 +1029,7 @@ router.put('/records/:id', authenticate, requireSalaryRole, async (req, res) => 
 });
 
 // POST /api/salary/lock-month — lock all salary records for a month
-router.post('/lock-month', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/lock-month', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { month } = req.body;
     if (!month) return res.status(400).json({ error: 'Thiếu tháng (month)' });
@@ -1055,7 +1055,7 @@ router.post('/lock-month', authenticate, requireSalaryRole, async (req, res) => 
 });
 
 // POST /api/salary/unlock-month — unlock salary records for a month
-router.post('/unlock-month', authenticate, requireSalaryRole, async (req, res) => {
+router.post('/unlock-month', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { month } = req.body;
     if (!month) return res.status(400).json({ error: 'Thiếu tháng (month)' });
@@ -1238,7 +1238,7 @@ router.get('/attendance-scores', authenticate, adminOrSalaryRole, async (req, re
 });
 
 // PUT /api/salary/records/:id/adjust-ot — admin adjusts OT/holiday effective hours for a salary record
-router.put('/records/:id/adjust-ot', authenticate, requireSalaryRole, async (req, res) => {
+router.put('/records/:id/adjust-ot', authenticate, adminOrSalaryRole, async (req, res) => {
   try {
     const { otHoursOverride, holidayHoursOverride, otBonusDesc, note } = req.body;
     const [existing] = await pool.execute('SELECT * FROM salary_records WHERE id = ?', [req.params.id]);
@@ -1296,8 +1296,7 @@ router.put('/records/:id/adjust-ot', authenticate, requireSalaryRole, async (req
 router.get('/table-config', authenticate, async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT columns FROM payroll_table_config WHERE user_id = ?',
-      [req.user.id]
+      "SELECT columns FROM payroll_table_config WHERE user_id = 'global'"
     );
     if (rows.length > 0) {
       res.json({ columns: JSON.parse(rows[0].columns) });
@@ -1316,13 +1315,146 @@ router.put('/table-config', authenticate, async (req, res) => {
     if (!Array.isArray(columns)) return res.status(400).json({ error: 'columns phải là array' });
     const colJson = JSON.stringify(columns);
     await pool.execute(
-      `INSERT INTO payroll_table_config (user_id, columns) VALUES (?, ?)
+      `INSERT INTO payroll_table_config (user_id, columns) VALUES ('global', ?)
        ON DUPLICATE KEY UPDATE columns = VALUES(columns)`,
-      [req.user.id, colJson]
+      [colJson]
     );
     res.json({ success: true });
   } catch (err) {
     console.error('Save table config error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// ========== FORMULA CONFIG (for "Set tính lương" modal) ==========
+
+// GET /api/salary/formula-config?column=<colKey>&targetType=<all|preset|individual>&targetId=<id>
+router.get('/formula-config', authenticate, async (req, res) => {
+  try {
+    const { column, targetType, targetId } = req.query;
+    if (!column) return res.status(400).json({ error: 'Thiếu column' });
+
+    let rows;
+    const tid = (targetType && targetType !== 'all' && targetId) ? targetId : '__all__';
+    [rows] = await pool.execute(
+      'SELECT * FROM salary_formula_config WHERE column_key = ? AND target_type = ? AND target_id = ?',
+      [column, targetType || 'all', tid]
+    );
+
+    if (rows.length > 0) {
+      const row = rows[0];
+      res.json({
+        id: row.id,
+        column: row.column_key,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        formula: row.formula,
+        deductionConfig: typeof row.deduction_config === 'string' ? JSON.parse(row.deduction_config) : row.deduction_config,
+      });
+    } else {
+      res.json(null);
+    }
+  } catch (err) {
+    console.error('Get formula config error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/formula-config — save or update formula config
+router.put('/formula-config', authenticate, adminOrSalaryRole, async (req, res) => {
+  try {
+    const { column, targetType, targetId, formula, deductionConfig } = req.body;
+    if (!column) return res.status(400).json({ error: 'Thiếu column' });
+
+    const dedCfgStr = deductionConfig ? JSON.stringify(deductionConfig) : null;
+    const tid = (targetType === 'all' || !targetId) ? '__all__' : targetId;
+
+    await pool.execute(
+      `INSERT INTO salary_formula_config (column_key, target_type, target_id, formula, deduction_config, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE formula = VALUES(formula), deduction_config = VALUES(deduction_config)`,
+      [column, targetType || 'all', tid, formula || null, dedCfgStr, req.user.id]
+    );
+    res.json({ success: true, message: 'Đã lưu công thức' });
+  } catch (err) {
+    console.error('Save formula config error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// GET /api/salary/formula-config/by-preset/:presetId — load formula from preset's custom_formula
+router.get('/formula-config/by-preset/:presetId', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT custom_formula, formula_type FROM salary_presets WHERE id = ?',
+      [req.params.presetId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Preset không tồn tại' });
+
+    const preset = rows[0];
+    let parsedFormula = null;
+    try {
+      parsedFormula = preset.custom_formula ? JSON.parse(preset.custom_formula) : null;
+    } catch { parsedFormula = null; }
+
+    res.json({
+      formulaType: preset.formula_type,
+      customFormula: parsedFormula,
+      rawFormula: preset.custom_formula,
+    });
+  } catch (err) {
+    console.error('Get preset formula error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// GET /api/salary/deduction-items — list all deduction items
+router.get('/deduction-items', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM salary_deduction_items ORDER BY priority ASC');
+    res.json(rows);
+  } catch (err) {
+    console.error('Get deduction items error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// POST /api/salary/deduction-items — add a new deduction item
+router.post('/deduction-items', authenticate, adminOrSalaryRole, async (req, res) => {
+  try {
+    const { name, type, calc_type, amount, rate, description, priority } = req.body;
+    if (!name || !type) return res.status(400).json({ error: 'Thiếu name hoặc type' });
+    const id = 'ded_' + uuidv4().slice(0, 8);
+    await pool.execute(
+      `INSERT INTO salary_deduction_items (id, name, type, calc_type, amount, rate, description, priority, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+      [id, name, type || 'custom', calc_type || 'fixed', amount || 0, rate || 0, description || '', priority || 99, req.user.id]
+    );
+    res.json({ id, message: 'Đã tạo khoản trừ' });
+  } catch (err) {
+    console.error('Create deduction item error:', err);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+});
+
+// PUT /api/salary/deduction-items/:id — update a deduction item
+router.put('/deduction-items/:id', authenticate, adminOrSalaryRole, async (req, res) => {
+  try {
+    const { name, calc_type, amount, rate, description, is_active } = req.body;
+    await pool.execute(
+      `UPDATE salary_deduction_items SET
+        name = COALESCE(?, name),
+        calc_type = COALESCE(?, calc_type),
+        amount = COALESCE(?, amount),
+        rate = COALESCE(?, rate),
+        description = COALESCE(?, description),
+        is_active = COALESCE(?, is_active)
+       WHERE id = ?`,
+      [name, calc_type, amount, rate, description, is_active, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update deduction item error:', err);
     res.status(500).json({ error: 'Lỗi server' });
   }
 });

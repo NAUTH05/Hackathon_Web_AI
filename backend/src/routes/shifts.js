@@ -82,6 +82,28 @@ router.delete('/:id', authenticate, requireManager, async (req, res) => {
     const [rows] = await pool.execute('SELECT * FROM shifts WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy ca' });
 
+    // Check if shift is in use by assignments or attendance records
+    const [[assignRow]] = await pool.execute(
+      'SELECT COUNT(*) AS cnt FROM shift_assignments WHERE shift_id = ?', [req.params.id]
+    );
+    const assignCount = Number(assignRow.cnt);
+    if (assignCount > 0) {
+      return res.status(400).json({
+        error: `Ca "${rows[0].name}" đang được phân công cho ${assignCount} nhân viên. Hãy xóa phân công trước khi xóa ca.`,
+        count: assignCount,
+      });
+    }
+
+    const [[attRow]] = await pool.execute(
+      'SELECT COUNT(*) AS cnt FROM attendance_records WHERE shift_id = ?', [req.params.id]
+    );
+    if (Number(attRow.cnt) > 0) {
+      return res.status(400).json({
+        error: `Ca "${rows[0].name}" đã có dữ liệu chấm công (${attRow.cnt} bản ghi). Không thể xóa.`,
+        count: Number(attRow.cnt),
+      });
+    }
+
     await pool.execute('DELETE FROM shifts WHERE id = ?', [req.params.id]);
 
     await logAudit({
@@ -92,6 +114,10 @@ router.delete('/:id', authenticate, requireManager, async (req, res) => {
 
     res.json({ message: 'Đã xóa ca' });
   } catch (err) {
+    // MySQL FK constraint violation (safety net)
+    if (err.code === 'ER_ROW_IS_REFERENCED_2' || err.errno === 1451) {
+      return res.status(400).json({ error: 'Ca này đang được sử dụng. Không thể xóa.' });
+    }
     console.error('Delete shift error:', err);
     res.status(500).json({ error: 'Lỗi server' });
   }

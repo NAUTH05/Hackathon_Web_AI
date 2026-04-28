@@ -154,10 +154,11 @@ router.post('/unlock-day', authenticate, adminOnly, async (req, res) => {
   }
 });
 
-// GET /api/timesheets?month=YYYY-MM
+// GET /api/timesheets?month=YYYY-MM&search=...
 router.get('/', authenticate, async (req, res) => {
   try {
     const { month } = req.query;
+    const search = req.query.search ? `%${req.query.search}%` : null;
     let where = `WHERE 1=1`;
     const params = [];
 
@@ -169,6 +170,12 @@ router.get('/', authenticate, async (req, res) => {
     if (req.user.role !== 'admin') {
       params.push(req.user.employeeId);
       where += ` AND mt.employee_id = ?`;
+    }
+
+    // Search by name or employee_code (admin only sees all)
+    if (search && req.user.role === 'admin') {
+      where += ` AND (mt.employee_name LIKE ? OR e.employee_code LIKE ?)`;
+      params.push(search, search);
     }
 
     const page = Math.max(1, parseInt(req.query.page) || 1);

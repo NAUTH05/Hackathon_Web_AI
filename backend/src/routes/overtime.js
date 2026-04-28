@@ -37,6 +37,11 @@ router.get('/', authenticate, async (req, res) => {
       where += ` AND status = ?`;
     }
 
+    if (req.query.date) {
+      params.push(req.query.date);
+      where += ` AND date = ?`;
+    }
+
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 30));
     const offset = (page - 1) * limit;
@@ -72,8 +77,50 @@ router.post('/', authenticate, async (req, res) => {
       }
     }
 
+    // Validate OT time does not overlap with the employee's assigned shift(s) for that day
+    if (date && startTime && endTime) {
+      const dayOfWeek = new Date(date + 'T12:00:00+07:00').getDay();
+      const [shiftRows] = await pool.execute(
+        `SELECT s.name AS shift_name, s.start_time, s.end_time FROM shift_assignments sa
+         JOIN shifts s ON sa.shift_id = s.id
+         WHERE sa.employee_id = ? AND sa.day_of_week = ?
+           AND sa.effective_from <= ?
+           AND (sa.effective_to IS NULL OR sa.effective_to >= ?)`,
+        [empId, dayOfWeek, date, date]
+      );
 
+      if (shiftRows.length > 0) {
+        // Convert times to minutes for comparison
+        const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+        const otStart = toMin(startTime);
+        const otEnd = toMin(endTime);
 
+        // Normalize overnight ranges: if end <= start, add 24*60 to end
+        const normOtEnd = otEnd <= otStart ? otEnd + 1440 : otEnd;
+
+        // Two intervals [s1,e1] and [s2,e2] overlap if max(s1,s2) < min(e1,e2)
+        const overlaps = (s1, e1, s2, e2) => Math.max(s1, s2) < Math.min(e1, e2);
+
+        for (const shift of shiftRows) {
+          const shiftStart = toMin(shift.start_time);
+          const shiftEnd = toMin(shift.end_time);
+          const normShiftEnd = shiftEnd <= shiftStart ? shiftEnd + 1440 : shiftEnd;
+
+          // Check overlap in both cyclic phases (shift intervals can be offset by 24h)
+          const otOverlaps =
+            overlaps(otStart, normOtEnd, shiftStart, normShiftEnd) ||
+            overlaps(otStart + 1440, normOtEnd + 1440, shiftStart, normShiftEnd) ||
+            overlaps(otStart, normOtEnd, shiftStart + 1440, normShiftEnd + 1440);
+
+          if (otOverlaps) {
+            const shiftLabel = shift.shift_name ? ` (${shift.shift_name})` : '';
+            return res.status(400).json({
+              error: `Giờ tăng ca (${startTime} - ${endTime}) bị trùng với ca làm việc${shiftLabel} (${shift.start_time} - ${shift.end_time}). OT phải nằm ngoài giờ ca.`
+            });
+          }
+        }
+      }
+    }
 
     await pool.execute(
       `INSERT INTO ot_requests (id, employee_id, employee_name, date, shift_id, start_time, end_time, hours, multiplier, reason)

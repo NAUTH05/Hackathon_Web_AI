@@ -3,7 +3,7 @@ const pool = require('../config/db');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcrypt');
 const { authenticate, adminOnly, canCreateEmployee } = require('../middleware/auth');
-const { toCamelCase, toCamelCaseArray, logAudit } = require('../helpers');
+const { toCamelCase, toCamelCaseArray, logAudit, deleteAvatarFile } = require('../helpers');
 
 // GET /api/employees — list with pagination, filters, sorting
 router.get('/', authenticate, async (req, res) => {
@@ -66,6 +66,7 @@ router.get('/', authenticate, async (req, res) => {
     const baseQuery = `
       FROM employees e
       LEFT JOIN departments d ON e.department_id = d.id
+      LEFT JOIN users u ON u.employee_id = e.id
       ${where}
     `;
 
@@ -73,14 +74,30 @@ router.get('/', authenticate, async (req, res) => {
     const [countResult] = await pool.execute(`SELECT COUNT(*) AS total ${baseQuery}`, params);
     const total = countResult[0].total;
 
-    // Fetch page
+    // Fetch page — COALESCE users.avatar over employees.avatar so profile changes propagate immediately
     const [rows] = await pool.execute(
-      `SELECT e.*, d.name AS department ${baseQuery} ${orderClause} LIMIT ${limit} OFFSET ${offset}`,
+      `SELECT e.*, d.name AS department, COALESCE(u.avatar, e.avatar) AS avatar ${baseQuery} ${orderClause} LIMIT ${limit} OFFSET ${offset}`,
       params
     );
 
     res.json({
-      data: toCamelCaseArray(rows),
+      data: rows.map(r => {
+        const employee = toCamelCase(r);
+        if (r.face_descriptor) {
+          try {
+            const buffer = Buffer.from(r.face_descriptor);
+            const floatArray = [];
+            for (let i = 0; i < buffer.length; i += 4) {
+              floatArray.push(buffer.readFloatLE(i));
+            }
+            employee.faceDescriptor = floatArray;
+          } catch (e) {
+            console.error(`List descriptor error for ${r.employee_code}:`, e.message);
+            employee.faceDescriptor = null;
+          }
+        }
+        return employee;
+      }),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
     });
   } catch (err) {
@@ -97,13 +114,28 @@ router.get('/face-descriptors', authenticate, async (req, res) => {
        FROM employees
        WHERE face_descriptor IS NOT NULL AND is_active = 1`
     );
-    const result = rows.map(r => ({
-      id: r.id,
-      name: r.name,
-      employeeCode: r.employee_code,
-      faceDescriptor: r.face_descriptor ? Array.from(new Float32Array(r.face_descriptor.buffer, r.face_descriptor.byteOffset, r.face_descriptor.byteLength / 4)) : null,
-      faceImage: r.face_image,
-    }));
+    const result = rows.map(r => {
+      let descriptor = null;
+      if (r.face_descriptor) {
+        try {
+          const buffer = Buffer.from(r.face_descriptor);
+          const floatArray = [];
+          for (let i = 0; i < buffer.length; i += 4) {
+            floatArray.push(buffer.readFloatLE(i));
+          }
+          descriptor = floatArray;
+        } catch (e) {
+          console.error(`Invalid descriptor for ${r.employee_code}:`, e.message);
+        }
+      }
+      return {
+        id: r.id,
+        name: r.name,
+        employeeCode: r.employee_code,
+        faceDescriptor: descriptor,
+        faceImage: r.face_image,
+      };
+    });
     res.json(result);
   } catch (err) {
     console.error('Get face descriptors error:', err);
@@ -122,7 +154,30 @@ router.get('/:id', authenticate, async (req, res) => {
       [req.params.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
-    res.json(toCamelCase(rows[0]));
+
+    const employee = toCamelCase(rows[0]);
+
+    // Explicitly format faceDescriptor as number array for frontend compatibility
+    if (rows[0].face_descriptor) {
+      try {
+        const buffer = Buffer.from(rows[0].face_descriptor);
+        const floatArray = [];
+        for (let i = 0; i < buffer.length; i += 4) {
+          floatArray.push(buffer.readFloatLE(i));
+        }
+        employee.faceDescriptor = floatArray;
+      } catch (e) {
+        console.error('Descriptor parse error:', e.message);
+        employee.faceDescriptor = null;
+      }
+    }
+
+    // Include faceImage for display in edit form
+    if (rows[0].face_image) {
+      employee.faceImage = rows[0].face_image;
+    }
+
+    res.json(employee);
   } catch (err) {
     console.error('Get employee error:', err);
     res.status(500).json({ error: 'Lỗi server' });
@@ -191,6 +246,44 @@ router.put('/:id', authenticate, adminOnly, async (req, res) => {
   try {
     const { name, employeeCode, departmentId, position, roleLevel, email, phone, avatar, isActive } = req.body;
 
+    // --- Security: role-level hierarchy checks ---
+    // Fetch the target employee's current role_level
+    const [targetRows] = await pool.execute(
+      'SELECT e.role_level, u.id AS user_id FROM employees e LEFT JOIN users u ON u.employee_id = e.id WHERE e.id = ?',
+      [req.params.id]
+    );
+    if (targetRows.length === 0) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
+
+    const targetRoleLevel = targetRows[0].role_level;
+    const editorRoleLevel = req.user.roleLevel || 1;
+
+    // Issue 5: Only allow editing employees whose role_level is strictly higher (numerically larger = lower rank)
+    // Exception: allow self-editing (editing your own employee record)
+    const isSelf = targetRows[0].user_id === req.user.id;
+    if (!isSelf && editorRoleLevel >= targetRoleLevel) {
+      return res.status(403).json({ error: 'Bạn không có quyền chỉnh sửa nhân viên có cùng hoặc cao hơn cấp bậc của mình' });
+    }
+
+    // Issue 3: Prevent self-downgrade — cannot lower their own role_level
+    if (isSelf && roleLevel != null && Number(roleLevel) > editorRoleLevel) {
+      return res.status(403).json({ error: 'Bạn không được tự hạ cấp bậc của chính mình' });
+    }
+
+    // Issue 3: Prevent elevating anyone to a level equal/higher than yourself (unless you're level 1)
+    if (!isSelf && roleLevel != null && Number(roleLevel) < editorRoleLevel && editorRoleLevel > 1) {
+      return res.status(403).json({ error: 'Bạn không thể nâng cấp nhân viên lên cấp bậc bằng hoặc cao hơn của mình' });
+    }
+
+
+    // If avatar is explicitly sent as null → clear it; if omitted → keep existing via COALESCE
+    const avatarInBody = 'avatar' in req.body;
+    const avatarSql = avatarInBody ? 'avatar = ?' : 'avatar = COALESCE(?, avatar)';
+    const avatarVal = avatarInBody ? (avatar || null) : null;
+
+    // Fetch old avatar URL before updating (so we can delete it from disk)
+    const [oldRows] = await pool.execute('SELECT avatar FROM employees WHERE id = ?', [req.params.id]);
+    const oldAvatarUrl = oldRows[0]?.avatar || null;
+
     await pool.execute(
       `UPDATE employees SET
         name = COALESCE(?, name),
@@ -200,14 +293,49 @@ router.put('/:id', authenticate, adminOnly, async (req, res) => {
         role_level = COALESCE(?, role_level),
         email = COALESCE(?, email),
         phone = COALESCE(?, phone),
-        avatar = COALESCE(?, avatar),
+        ${avatarSql},
         is_active = COALESCE(?, is_active)
        WHERE id = ?`,
-      [name, employeeCode, departmentId, position, roleLevel, email, phone, avatar, isActive, req.params.id]
+      [
+        name ?? null,
+        employeeCode ?? null,
+        departmentId || null,
+        position ?? null,
+        roleLevel != null ? Number(roleLevel) : null,
+        email || null,
+        phone ?? null,
+        avatarVal,
+        isActive != null ? (isActive ? 1 : 0) : null,
+        req.params.id,
+      ]
     );
 
     const [rows] = await pool.execute('SELECT * FROM employees WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
+
+    // Sync users table (name, role_level, department, avatar)
+    const [emp] = await pool.execute(
+      `SELECT e.*, d.name AS department FROM employees e LEFT JOIN departments d ON e.department_id = d.id WHERE e.id = ?`,
+      [req.params.id]
+    );
+    const updatedEmp = emp[0];
+    await pool.execute(
+      `UPDATE users SET
+        name = ?,
+        role_level = ?,
+        department = ?,
+        avatar = ?,
+        role = ?
+       WHERE employee_id = ?`,
+      [
+        updatedEmp.name,
+        updatedEmp.role_level,
+        updatedEmp.department || null,
+        updatedEmp.avatar || null,
+        updatedEmp.role_level <= 1 ? 'admin' : 'user',
+        req.params.id,
+      ]
+    );
 
     await logAudit({
       action: 'update-employee',
@@ -216,11 +344,12 @@ router.put('/:id', authenticate, adminOnly, async (req, res) => {
       details: `Cập nhật thông tin nhân viên ${rows[0].name}`,
     });
 
-    const [emp] = await pool.execute(
-      `SELECT e.*, d.name AS department FROM employees e LEFT JOIN departments d ON e.department_id = d.id WHERE e.id = ?`,
-      [req.params.id]
-    );
-    res.json(toCamelCase(emp[0]));
+    // Xóa file avatar cũ trên disk nếu avatar đã thay đổi
+    if (avatarInBody && oldAvatarUrl && oldAvatarUrl !== (updatedEmp.avatar || null)) {
+      deleteAvatarFile(oldAvatarUrl);
+    }
+
+    res.json(toCamelCase(updatedEmp));
   } catch (err) {
     console.error('Update employee error:', err);
     if (err.errno === 1062) {
@@ -253,8 +382,24 @@ router.delete('/:id', authenticate, adminOnly, async (req, res) => {
 });
 
 // POST /api/employees/:id/face — save face descriptor + face image
-router.post('/:id/face', authenticate, adminOnly, async (req, res) => {
+// Admin có thể cập nhật cho bất kỳ ai; user thường chỉ được cập nhật của chính mình
+router.post('/:id/face', authenticate, async (req, res) => {
   try {
+    const isAdmin = req.user.role === 'admin' || (req.user.roleLevel || 5) <= 2;
+    // isSelf: so sánh qua JWT trước, fallback query DB nếu JWT không có employeeId
+    let isSelf = req.user.employeeId === req.params.id;
+    if (!isSelf && !isAdmin) {
+      // Fallback: kiểm tra qua DB xem user có liên kết với employee này không
+      const [selfCheck] = await pool.execute(
+        'SELECT id FROM users WHERE id = ? AND employee_id = ?',
+        [req.user.id, req.params.id]
+      );
+      isSelf = selfCheck.length > 0;
+    }
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({ error: 'Bạn chỉ có thể cập nhật khuôn mặt của chính mình' });
+    }
+
     const { faceDescriptor, faceImage } = req.body;
 
     // Convert float array to Buffer for BLOB storage
